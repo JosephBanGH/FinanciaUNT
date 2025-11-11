@@ -12,6 +12,8 @@ import uuid
 from fpdf import FPDF
 import io
 import base64
+import requests
+
 
 # Configuración de la página
 st.set_page_config(
@@ -81,6 +83,10 @@ class TransaccionManager:
     """Mantenedor de Transacciones"""
     def __init__(self, db: DatabaseManager):
         self.db = db.get_client()
+        self.supabase_url = st.secrets.get("SUPABASE_URL", "https://tu-proyecto.supabase.co")
+        self.supabase_key = st.secrets.get("SUPABASE_KEY", "tu-clave-supabase")
+        self.n8n_webhook = st.secrets.get("N8N_WEBHOOK", "")
+        
     
     def listar_transacciones(self, usuario_id: Optional[str] = None, dias: int = 30) -> pd.DataFrame:
         try:
@@ -458,6 +464,9 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
                     
                 except Exception as e:
                     st.error(f"❌ Error al generar PDF: {str(e)}")
+
+        mostrar_chat(usuario_id)
+        st.divider()
     
     # Obtener datos
     transacciones = transaccion_mgr.listar_transacciones(usuario_id, dias)
@@ -465,6 +474,8 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
     
     asesor = AsesorFinanciero(transaccion_mgr, presupuesto_mgr)
     analisis = asesor.get_analisis_ia(transacciones, presupuestos)
+
+
     
     # Mostrar alertas del sistema como notificaciones temporales (10 segundos)
     df_alertas = alerta_mgr.listar_alertas(usuario_id, solo_no_leidas=True)
@@ -667,6 +678,8 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
         else:
             st.info("No hay estadísticas")
     
+    
+
     # Generar PDF si se solicitó
     if st.session_state.get('generar_pdf', False):
         with st.spinner('📄 Generando reporte PDF...'):
@@ -684,6 +697,190 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
                 st.error(f"❌ Error al generar PDF: {str(e)}")
             
             st.session_state['generar_pdf'] = False
+class AsesorFinancieroAntiguo:
+    def __init__(self):
+        self.supabase_url = st.secrets.get("SUPABASE_URL", "https://tu-proyecto.supabase.co")
+        self.supabase_key = st.secrets.get("SUPABASE_KEY", "tu-clave-supabase")
+        self.n8n_webhook = st.secrets.get("N8N_WEBHOOK", "")
+        
+    def get_transacciones(self, usuario_id, dias=30):
+        """Obtener transacciones de los últimos días"""
+        # En producción, esto se conectaría a Supabase
+        fecha_inicio = datetime.now() - timedelta(days=dias)
+        
+        # Datos de ejemplo
+        categorias = ['Alimentación', 'Transporte', 'Entretenimiento', 'Servicios', 'Salud', 'Educación']
+        transacciones = []
+        
+        # Si hay transacciones en la sesión, úsalas
+        if 'transacciones' in st.session_state:
+            return st.session_state.transacciones
+        
+        # Si no hay transacciones en la sesión, usa datos de ejemplo
+        for i in range(100):
+            fecha = fecha_inicio + timedelta(days=np.random.randint(0, dias))
+            categoria = np.random.choice(categorias)
+            monto = abs(np.random.normal(50, 30))
+            
+            transacciones.append({
+                'id': f'trx_{i}',
+                'usuario_id': usuario_id,
+                'fecha': fecha.strftime('%Y-%m-%d'),
+                'categoria': categoria,
+                'descripcion': f'Compra en {categoria}',
+                'monto': round(monto, 2),
+                'tipo': 'gasto'
+            })
+        
+        # Agregar algunos ingresos
+        for i in range(10):
+            fecha = fecha_inicio + timedelta(days=np.random.randint(0, dias))
+            transacciones.append({
+                'id': f'ing_{i}',
+                'usuario_id': usuario_id,
+                'fecha': fecha.strftime('%Y-%m-%d'),
+                'categoria': 'Ingresos',
+                'descripcion': 'Salario',
+                'monto': round(np.random.normal(2000, 500), 2),
+                'tipo': 'ingreso'
+            })
+        
+        # Guardar en la sesión
+        df = pd.DataFrame(transacciones)
+        st.session_state.transacciones = df
+        return df
+        
+    def agregar_gasto(self, usuario_id, monto, categoria, descripcion):
+        """Agregar un nuevo gasto"""
+        nueva_transaccion = {
+            'id': f'trx_{int(time.time())}',
+            'usuario_id': usuario_id,
+            'fecha': datetime.now().strftime('%Y-%m-%d'),
+            'categoria': categoria,
+            'descripcion': descripcion,
+            'monto': float(monto),
+            'tipo': 'gasto'
+        }
+        
+        # Agregar a la sesión
+        if 'transacciones' in st.session_state:
+            df = st.session_state.transacciones
+            df = pd.concat([df, pd.DataFrame([nueva_transaccion])], ignore_index=True)
+            st.session_state.transacciones = df
+        
+        # En producción, aquí se haría la llamada a la API de n8n
+        try:
+            response = requests.post(
+                self.n8n_webhook + "/webhook-expense",
+                json={
+                    'user_id': usuario_id,
+                    'text': f"Agregar gasto de {monto} soles en {categoria} - {descripcion}"
+                },
+                timeout=5
+            )
+            return True, "Gasto agregado correctamente"
+        except Exception as e:
+            return False, f"Error al conectar con el servidor: {str(e)}"
+    
+    def get_presupuestos(self, usuario_id):
+        """Obtener presupuestos del usuario"""
+        presupuestos = {
+            'Alimentación': 300,
+            'Transporte': 200,
+            'Entretenimiento': 150,
+            'Servicios': 100,
+            'Salud': 50,
+            'Educación': 100
+        }
+        return presupuestos
+    
+    def get_analisis_ia(self, transacciones):
+        """Generar análisis con IA (simulado)"""
+        gastos_por_categoria = transacciones[transacciones['tipo'] == 'gasto'].groupby('categoria')['monto'].sum()
+        total_gastos = gastos_por_categoria.sum()
+        total_ingresos = transacciones[transacciones['tipo'] == 'ingreso']['monto'].sum()
+        
+        analisis = {
+            'resumen': {
+                'total_ingresos': total_ingresos,
+                'total_gastos': total_gastos,
+                'ahorro_neto': total_ingresos - total_gastos,
+                'tasa_ahorro': ((total_ingresos - total_gastos) / total_ingresos * 100) if total_ingresos > 0 else 0
+            },
+            'recomendaciones': [
+                "Considera reducir gastos en entretenimiento que superan el 15% de tus ingresos",
+                "Podrías automatizar tus ahorros con un 20% de tu salario",
+                "Revisa tus suscripciones recurrentes, algunas podrían no ser necesarias",
+                "Excelente trabajo manteniendo tus gastos de alimentación dentro del presupuesto"
+            ],
+            'alertas': [
+                "Gastos en transporte cerca de exceder el presupuesto",
+                "Patrón de gastos los fines de semana superior al promedio"
+            ],
+            'predicciones': {
+                'ahorro_3_meses': (total_ingresos - total_gastos) * 3 * 1.1,  # +10% de crecimiento
+                'proyeccion_gastos': total_gastos * 1.05  # +5% de incremento
+            }
+        }
+        
+        return analisis
+
+def mostrar_chat(usuario_id):
+    """Muestra la interfaz de chat para agregar gastos"""
+    st.subheader("💬 Chat de Gastos")
+    
+    # Inicializar el historial del chat si no existe
+    if 'mensajes' not in st.session_state:
+        st.session_state.mensajes = [
+            {"role": "assistant", "content": "¡Hola! Soy tu asistente financiero. Puedes decirme cosas como:\n- 'Gasté 80 soles en el supermercado'\n- 'Añade 50 de almuerzo de hoy'\n- 'Pagué 30 por el taxi ayer'"}
+        ]
+    
+    # Mostrar el historial del chat
+    for mensaje in st.session_state.mensajes:
+        with st.chat_message(mensaje["role"]):
+            st.markdown(mensaje["content"])
+    
+    # Entrada de texto del usuario
+    if prompt := st.chat_input("Escribe tu gasto aquí..."):
+        # Agregar el mensaje del usuario al historial
+        st.session_state.mensajes.append({"role": "user", "content": prompt})
+        
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Procesar el mensaje
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            full_response = ""
+            
+            # Llamar a la API de n8n
+            asesor = AsesorFinancieroAntiguo()
+            try:
+                response = requests.post(
+                    f"{asesor.n8n_webhook}",
+                    json={
+                        'user_id': usuario_id,  # En producción, usar el ID del usuario autenticado
+                        'text': prompt
+                    },
+                    timeout=500
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    print(data)
+                    full_response = f"✅ Gasto registrado: {data.get('text', '')}"
+                else:
+                    full_response = "❌ No pude procesar tu gasto. Por favor, inténtalo de nuevo con un formato como: 'Gasté 50 en almuerzo hoy'"
+                    
+            except Exception as e:
+                full_response = f"❌ Error al conectar con el servidor: {str(e)}"
+            
+            message_placeholder.markdown(full_response)
+            st.session_state.mensajes.append({"role": "assistant", "content": full_response})
+            
+            # Actualizar la interfaz
+            st.rerun()
+
 
 def pagina_mantenedores(db: DatabaseManager, usuario_mgr: UsuarioManager, 
                         transaccion_mgr: TransaccionManager, presupuesto_mgr: PresupuestoManager,
