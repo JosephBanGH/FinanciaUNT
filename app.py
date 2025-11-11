@@ -1,0 +1,1129 @@
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import numpy as np
+from datetime import datetime, timedelta
+import json
+from supabase import create_client, Client
+from typing import Dict, List, Optional
+import uuid
+from fpdf import FPDF
+import io
+import base64
+
+# Configuración de la página
+st.set_page_config(
+    page_title="Asesor Financiero Personal IA",
+    page_icon="💰",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ==================== MANAGERS ====================
+
+class DatabaseManager:
+    """Gestor de conexión con Supabase"""
+    def __init__(self):
+        try:
+            self.supabase_url = st.secrets.get("SUPABASE_URL")
+            self.supabase_key = st.secrets.get("SUPABASE_KEY")
+            self.client: Client = create_client(self.supabase_url, self.supabase_key)
+        except Exception as e:
+            st.error(f"Error conectando a Supabase: {str(e)}")
+            self.client = None
+    
+    def get_client(self) -> Client:
+        return self.client
+
+class UsuarioManager:
+    """Mantenedor de Usuarios"""
+    def __init__(self, db: DatabaseManager):
+        self.db = db.get_client()
+    
+    def listar_usuarios(self) -> pd.DataFrame:
+        try:
+            response = self.db.table('usuarios').select('*').order('fecha_registro', desc=True).execute()
+            return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+        except:
+            return pd.DataFrame()
+    
+    def crear_usuario(self, email: str, nombre: str, plan: str = 'basico') -> Dict:
+        data = {
+            'email': email,
+            'nombre': nombre,
+            'plan_suscripcion': plan,
+            'configuracion': {}
+        }
+        response = self.db.table('usuarios').insert(data).execute()
+        return response.data[0] if response.data else None
+    
+    def actualizar_usuario(self, usuario_id: str, datos: Dict) -> Dict:
+        response = self.db.table('usuarios').update(datos).eq('id', usuario_id).execute()
+        return response.data[0] if response.data else None
+    
+    def eliminar_usuario(self, usuario_id: str) -> bool:
+        try:
+            self.db.table('presupuestos').delete().eq('usuario_id', usuario_id).execute()
+            self.db.table('transacciones').delete().eq('usuario_id', usuario_id).execute()
+            self.db.table('alertas').delete().eq('usuario_id', usuario_id).execute()
+            self.db.table('analisis_financiero').delete().eq('usuario_id', usuario_id).execute()
+            self.db.table('inversiones').delete().eq('usuario_id', usuario_id).execute()
+            self.db.table('suscripciones').delete().eq('usuario_id', usuario_id).execute()
+            response = self.db.table('usuarios').delete().eq('id', usuario_id).execute()
+            return True if response.data else False
+        except Exception as e:
+            st.error(f"Error eliminando usuario: {str(e)}")
+            return False
+
+class TransaccionManager:
+    """Mantenedor de Transacciones"""
+    def __init__(self, db: DatabaseManager):
+        self.db = db.get_client()
+    
+    def listar_transacciones(self, usuario_id: Optional[str] = None, dias: int = 30) -> pd.DataFrame:
+        try:
+            fecha_inicio = (datetime.now() - timedelta(days=dias)).strftime('%Y-%m-%d')
+            query = self.db.table('transacciones').select('*').gte('fecha', fecha_inicio)
+            if usuario_id:
+                query = query.eq('usuario_id', usuario_id)
+            response = query.order('fecha', desc=True).execute()
+            return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+        except:
+            return pd.DataFrame()
+    
+    def crear_transaccion(self, usuario_id: str, monto: float, categoria: str, 
+                         descripcion: str, fecha: str, tipo: str, cuenta: str = '') -> Dict:
+        data = {
+            'usuario_id': usuario_id,
+            'monto': monto,
+            'categoria': categoria,
+            'descripcion': descripcion,
+            'fecha': fecha,
+            'tipo': tipo,
+            'cuenta': cuenta,
+            'metadata': {}
+        }
+        response = self.db.table('transacciones').insert(data).execute()
+        return response.data[0] if response.data else None
+    
+    def actualizar_transaccion(self, transaccion_id: str, datos: Dict) -> Dict:
+        response = self.db.table('transacciones').update(datos).eq('id', transaccion_id).execute()
+        return response.data[0] if response.data else None
+    
+    def eliminar_transaccion(self, transaccion_id: str) -> bool:
+        response = self.db.table('transacciones').delete().eq('id', transaccion_id).execute()
+        return True if response.data else False
+
+class PresupuestoManager:
+    """Mantenedor de Presupuestos"""
+    def __init__(self, db: DatabaseManager):
+        self.db = db.get_client()
+    
+    def listar_presupuestos(self, usuario_id: Optional[str] = None) -> pd.DataFrame:
+        try:
+            query = self.db.table('presupuestos').select('*')
+            if usuario_id:
+                query = query.eq('usuario_id', usuario_id)
+            response = query.order('categoria').execute()
+            return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+        except:
+            return pd.DataFrame()
+    
+    def crear_presupuesto(self, usuario_id: str, categoria: str, 
+                         monto_maximo: float, periodo: str = 'mensual') -> Dict:
+        data = {
+            'usuario_id': usuario_id,
+            'categoria': categoria,
+            'monto_maximo': monto_maximo,
+            'periodo': periodo
+        }
+        response = self.db.table('presupuestos').insert(data).execute()
+        return response.data[0] if response.data else None
+    
+    def actualizar_presupuesto(self, presupuesto_id: str, datos: Dict) -> Dict:
+        response = self.db.table('presupuestos').update(datos).eq('id', presupuesto_id).execute()
+        return response.data[0] if response.data else None
+    
+    def eliminar_presupuesto(self, presupuesto_id: str) -> bool:
+        response = self.db.table('presupuestos').delete().eq('id', presupuesto_id).execute()
+        return True if response.data else False
+
+class AlertaManager:
+    """Mantenedor de Alertas"""
+    def __init__(self, db: DatabaseManager):
+        self.db = db.get_client()
+    
+    def listar_alertas(self, usuario_id: Optional[str] = None, solo_no_leidas: bool = False) -> pd.DataFrame:
+        try:
+            query = self.db.table('alertas').select('*')
+            if usuario_id:
+                query = query.eq('usuario_id', usuario_id)
+            if solo_no_leidas:
+                query = query.eq('leida', False)
+            response = query.order('created_at', desc=True).execute()
+            return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+        except:
+            return pd.DataFrame()
+    
+    def crear_alerta(self, usuario_id: str, tipo: str, mensaje: str, 
+                    severidad: str = 'media') -> Dict:
+        data = {
+            'usuario_id': usuario_id,
+            'tipo': tipo,
+            'mensaje': mensaje,
+            'severidad': severidad,
+            'leida': False
+        }
+        response = self.db.table('alertas').insert(data).execute()
+        return response.data[0] if response.data else None
+    
+    def marcar_leida(self, alerta_id: str) -> bool:
+        response = self.db.table('alertas').update({'leida': True}).eq('id', alerta_id).execute()
+        return True if response.data else False
+
+class AsesorFinanciero:
+    """Clase principal para análisis financiero"""
+    def __init__(self, transaccion_mgr: TransaccionManager, presupuesto_mgr: PresupuestoManager):
+        self.transaccion_mgr = transaccion_mgr
+        self.presupuesto_mgr = presupuesto_mgr
+    
+    def get_analisis_ia(self, transacciones: pd.DataFrame, presupuestos: pd.DataFrame):
+        """Generar análisis con IA"""
+        if transacciones.empty:
+            return {
+                'resumen': {
+                    'total_ingresos': 0,
+                    'total_gastos': 0,
+                    'ahorro_neto': 0,
+                    'tasa_ahorro': 0
+                },
+                'recomendaciones': ["No hay suficientes datos para generar recomendaciones"],
+                'alertas': [],
+                'predicciones': {
+                    'ahorro_3_meses': 0,
+                    'proyeccion_gastos': 0
+                }
+            }
+        
+        gastos_por_categoria = transacciones[transacciones['tipo'] == 'gasto'].groupby('categoria')['monto'].sum()
+        total_gastos = gastos_por_categoria.sum()
+        total_ingresos = transacciones[transacciones['tipo'] == 'ingreso']['monto'].sum()
+        
+        recomendaciones = []
+        alertas = []
+        
+        # Análisis de presupuestos
+        if not presupuestos.empty:
+            presupuestos_dict = presupuestos.set_index('categoria')['monto_maximo'].to_dict()
+            for categoria, gasto in gastos_por_categoria.items():
+                if categoria in presupuestos_dict:
+                    presupuesto = presupuestos_dict[categoria]
+                    porcentaje = (gasto / presupuesto) * 100
+                    if porcentaje > 90:
+                        alertas.append(f"Gastos en {categoria} al {porcentaje:.1f}% del presupuesto")
+                    elif porcentaje > 100:
+                        alertas.append(f"¡Presupuesto excedido en {categoria}! ({porcentaje:.1f}%)")
+        
+        # Recomendaciones generales
+        if total_ingresos > 0:
+            tasa_ahorro = ((total_ingresos - total_gastos) / total_ingresos * 100)
+            if tasa_ahorro < 10:
+                recomendaciones.append("Considera aumentar tu tasa de ahorro al menos al 10% de tus ingresos")
+            elif tasa_ahorro > 30:
+                recomendaciones.append("¡Excelente! Estás ahorrando más del 30% de tus ingresos")
+        
+        if not gastos_por_categoria.empty:
+            categoria_mayor = gastos_por_categoria.idxmax()
+            recomendaciones.append(f"Tu mayor gasto es en {categoria_mayor}. Revisa si puedes optimizarlo")
+        
+        analisis = {
+            'resumen': {
+                'total_ingresos': float(total_ingresos),
+                'total_gastos': float(total_gastos),
+                'ahorro_neto': float(total_ingresos - total_gastos),
+                'tasa_ahorro': float(((total_ingresos - total_gastos) / total_ingresos * 100) if total_ingresos > 0 else 0)
+            },
+            'recomendaciones': recomendaciones if recomendaciones else ["Continúa registrando tus transacciones para mejores análisis"],
+            'alertas': alertas,
+            'predicciones': {
+                'ahorro_3_meses': float((total_ingresos - total_gastos) * 3 * 1.05),
+                'proyeccion_gastos': float(total_gastos * 1.02)
+            }
+        }
+        
+        return analisis
+
+# ==================== PDF REPORT ====================
+
+class PDFReport(FPDF):
+    def header(self):
+        self.set_font('Arial', 'B', 16)
+        self.cell(0, 10, 'Reporte Financiero Personal', 0, 1, 'C')
+        self.set_font('Arial', 'I', 10)
+        self.cell(0, 5, f'Generado: {datetime.now().strftime("%d/%m/%Y %H:%M")}', 0, 1, 'C')
+        self.ln(10)
+    
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
+    
+    def chapter_title(self, title):
+        self.set_font('Arial', 'B', 14)
+        self.set_fill_color(52, 152, 219)
+        self.set_text_color(255, 255, 255)
+        self.cell(0, 10, title, 0, 1, 'L', 1)
+        self.set_text_color(0, 0, 0)
+        self.ln(5)
+    
+    def chapter_body(self, body):
+        self.set_font('Arial', '', 11)
+        self.multi_cell(0, 8, body)
+        self.ln()
+    
+    def add_metric(self, label, value):
+        self.set_font('Arial', 'B', 11)
+        self.cell(60, 8, label + ':', 0, 0)
+        self.set_font('Arial', '', 11)
+        self.cell(0, 8, str(value), 0, 1)
+
+
+def generar_reporte_pdf(usuario_nombre: str, transacciones: pd.DataFrame, 
+                        analisis: Dict, presupuestos: pd.DataFrame) -> bytes:
+    """Generar reporte PDF completo"""
+    pdf = PDFReport()
+    pdf.add_page()
+    
+    # Información del usuario
+    pdf.chapter_title('INFORMACION DEL USUARIO')
+    pdf.add_metric('Usuario', usuario_nombre)
+    pdf.add_metric('Periodo analizado', f'{len(transacciones)} transacciones')
+    pdf.ln(5)
+    
+    # Resumen ejecutivo
+    pdf.chapter_title('RESUMEN EJECUTIVO')
+    pdf.add_metric('Ingresos totales', f"${analisis['resumen']['total_ingresos']:,.2f}")
+    pdf.add_metric('Gastos totales', f"${analisis['resumen']['total_gastos']:,.2f}")
+    pdf.add_metric('Ahorro neto', f"${analisis['resumen']['ahorro_neto']:,.2f}")
+    pdf.add_metric('Tasa de ahorro', f"{analisis['resumen']['tasa_ahorro']:.1f}%")
+    pdf.ln(5)
+    
+    # Análisis por categorías
+    if not transacciones.empty:
+        pdf.chapter_title('GASTOS POR CATEGORIA')
+        gastos_cat = transacciones[transacciones['tipo'] == 'gasto'].groupby('categoria')['monto'].sum().sort_values(ascending=False)
+        
+        for categoria, monto in gastos_cat.items():
+            porcentaje = (monto / analisis['resumen']['total_gastos'] * 100) if analisis['resumen']['total_gastos'] > 0 else 0
+            pdf.set_font('Arial', '', 10)
+            pdf.cell(70, 7, f'  {categoria}', 0, 0)
+            pdf.cell(50, 7, f'${monto:,.2f}', 0, 0)
+            pdf.cell(0, 7, f'({porcentaje:.1f}%)', 0, 1)
+        pdf.ln(5)
+    
+    # Comparación con presupuestos
+    if not presupuestos.empty and not transacciones.empty:
+        pdf.chapter_title('COMPARACION CON PRESUPUESTOS')
+        gastos_cat = transacciones[transacciones['tipo'] == 'gasto'].groupby('categoria')['monto'].sum()
+        presupuestos_dict = presupuestos.set_index('categoria')['monto_maximo'].to_dict()
+        
+        for categoria in set(gastos_cat.index) & set(presupuestos_dict.keys()):
+            gasto = gastos_cat[categoria]
+            presupuesto = presupuestos_dict[categoria]
+            cumplimiento = (gasto / presupuesto * 100) if presupuesto > 0 else 0
+            estado = 'OK' if cumplimiento <= 100 else 'EXCEDIDO'
+            
+            pdf.set_font('Arial', '', 10)
+            pdf.cell(50, 7, f'  {categoria}', 0, 0)
+            pdf.cell(35, 7, f'${gasto:,.2f}', 0, 0)
+            pdf.cell(35, 7, f'${presupuesto:,.2f}', 0, 0)
+            pdf.cell(30, 7, f'{cumplimiento:.1f}%', 0, 0)
+            pdf.set_font('Arial', 'B', 10)
+            if estado == 'EXCEDIDO':
+                pdf.set_text_color(255, 0, 0)
+            else:
+                pdf.set_text_color(0, 128, 0)
+            pdf.cell(0, 7, estado, 0, 1)
+            pdf.set_text_color(0, 0, 0)
+        pdf.ln(5)
+    
+    # Recomendaciones de IA
+    pdf.chapter_title('RECOMENDACIONES INTELIGENTES')
+    for i, rec in enumerate(analisis['recomendaciones'], 1):
+        pdf.set_font('Arial', '', 10)
+        pdf.multi_cell(0, 7, f'{i}. {rec}')
+        pdf.ln(2)
+    pdf.ln(3)
+    
+    # Alertas
+    if analisis['alertas']:
+        pdf.chapter_title('ALERTAS IMPORTANTES')
+        for i, alerta in enumerate(analisis['alertas'], 1):
+            pdf.set_font('Arial', 'B', 10)
+            pdf.set_text_color(255, 102, 0)
+            pdf.multi_cell(0, 7, f'! {alerta}')
+            pdf.set_text_color(0, 0, 0)
+            pdf.ln(2)
+        pdf.ln(3)
+    
+    # Predicciones
+    pdf.chapter_title('PROYECCIONES FINANCIERAS')
+    pdf.add_metric('Ahorro proyectado (3 meses)', f"${analisis['predicciones']['ahorro_3_meses']:,.2f}")
+    pdf.add_metric('Gastos del próximo mes', f"${analisis['predicciones']['proyeccion_gastos']:,.2f}")
+    
+    # Transacciones recientes
+    if not transacciones.empty:
+        pdf.add_page()
+        pdf.chapter_title('TRANSACCIONES RECIENTES (ULTIMAS 15)')
+        
+        pdf.set_font('Arial', 'B', 9)
+        pdf.cell(25, 7, 'Fecha', 1, 0, 'C')
+        pdf.cell(40, 7, 'Categoria', 1, 0, 'C')
+        pdf.cell(80, 7, 'Descripcion', 1, 0, 'C')
+        pdf.cell(25, 7, 'Monto', 1, 0, 'C')
+        pdf.cell(20, 7, 'Tipo', 1, 1, 'C')
+        
+        pdf.set_font('Arial', '', 8)
+        transacciones_sorted = transacciones.sort_values('fecha', ascending=False).head(15)
+        
+        for _, row in transacciones_sorted.iterrows():
+            pdf.cell(25, 6, str(row['fecha'])[:10], 1, 0)
+            pdf.cell(40, 6, str(row['categoria'])[:18], 1, 0)
+            pdf.cell(80, 6, str(row['descripcion'])[:40], 1, 0)
+            pdf.cell(25, 6, f"${row['monto']:.2f}", 1, 0, 'R')
+            pdf.cell(20, 6, str(row['tipo']), 1, 1, 'C')
+    
+    # Convertir a bytes
+    return pdf.output(dest='S').encode('latin1')
+
+# ==================== PÁGINAS ====================
+
+def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager, 
+                     transaccion_mgr: TransaccionManager, presupuesto_mgr: PresupuestoManager,
+                     alerta_mgr: AlertaManager):
+    """Página principal del dashboard financiero"""
+    st.title("💰 Dashboard Financiero")
+    st.markdown("---")
+    
+    # Sidebar
+    with st.sidebar:
+        st.header("📊 Configuración")
+        df_usuarios = usuario_mgr.listar_usuarios()
+        
+        if df_usuarios.empty:
+            st.warning("No hay usuarios. Crea uno en la sección de Mantenedores")
+            return
+        
+        usuario_id = st.selectbox(
+            "Usuario",
+            options=df_usuarios['id'].tolist(),
+            format_func=lambda x: df_usuarios[df_usuarios['id']==x]['nombre'].values[0]
+        )
+        
+        usuario_nombre = df_usuarios[df_usuarios['id']==usuario_id]['nombre'].values[0]
+        
+        periodo = st.selectbox("Período de análisis", ["Últimos 7 días", "Últimos 30 días", "Últimos 90 días"])
+        dias_map = {"Últimos 7 días": 7, "Últimos 30 días": 30, "Últimos 90 días": 90}
+        dias = dias_map[periodo]
+        
+        st.markdown("---")
+        st.header("⚡ Acciones Rápidas")
+        if st.button("🔄 Actualizar Análisis", use_container_width=True):
+            st.rerun()
+        
+        # Botón para generar PDF
+        if st.button("📄 Generar Reporte PDF", use_container_width=True, type="primary"):
+            with st.spinner('📄 Generando reporte PDF...'):
+                try:
+                    transacciones_pdf = transaccion_mgr.listar_transacciones(usuario_id, dias)
+                    presupuestos_pdf = presupuesto_mgr.listar_presupuestos(usuario_id)
+                    asesor_pdf = AsesorFinanciero(transaccion_mgr, presupuesto_mgr)
+                    analisis_pdf = asesor_pdf.get_analisis_ia(transacciones_pdf, presupuestos_pdf)
+                    
+                    pdf_bytes = generar_reporte_pdf(usuario_nombre, transacciones_pdf, analisis_pdf, presupuestos_pdf)
+                    
+                    b64 = base64.b64encode(pdf_bytes).decode()
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    
+                    st.success("✅ ¡Reporte PDF generado exitosamente!")
+                    st.download_button(
+                        label="📥 Descargar Reporte PDF",
+                        data=pdf_bytes,
+                        file_name=f"reporte_financiero_{timestamp}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
+                    
+                except Exception as e:
+                    st.error(f"❌ Error al generar PDF: {str(e)}")
+    
+    # Obtener datos
+    transacciones = transaccion_mgr.listar_transacciones(usuario_id, dias)
+    presupuestos = presupuesto_mgr.listar_presupuestos(usuario_id)
+    
+    asesor = AsesorFinanciero(transaccion_mgr, presupuesto_mgr)
+    analisis = asesor.get_analisis_ia(transacciones, presupuestos)
+    
+    # Mostrar alertas del sistema como notificaciones temporales (10 segundos)
+    df_alertas = alerta_mgr.listar_alertas(usuario_id, solo_no_leidas=True)
+    if not df_alertas.empty:
+        # Crear un contenedor para las alertas con auto-desaparición
+        alerta_container = st.empty()
+        
+        with alerta_container.container():
+            for idx, alerta in df_alertas.head(3).iterrows():
+                if alerta['severidad'] == 'alta':
+                    st.error(f"🔴 {alerta['mensaje']}", icon="🚨")
+                elif alerta['severidad'] == 'media':
+                    st.warning(f"🟡 {alerta['mensaje']}", icon="⚠️")
+                else:
+                    st.info(f"🟢 {alerta['mensaje']}", icon="ℹ️")
+                
+                # Auto-marcar como leída después de mostrar
+                alerta_mgr.marcar_leida(alerta['id'])
+        
+        # JavaScript para ocultar las alertas después de 10 segundos
+        st.markdown("""
+        <script>
+        setTimeout(function() {
+            var alerts = document.querySelectorAll('[data-testid="stAlert"]');
+            alerts.forEach(function(alert) {
+                alert.style.transition = 'opacity 0.5s ease-out';
+                alert.style.opacity = '0';
+                setTimeout(function() {
+                    alert.style.display = 'none';
+                }, 500);
+            });
+        }, 10000);
+        </script>
+        """, unsafe_allow_html=True)
+    
+    # Métricas principales
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            "💵 Ingresos Totales",
+            f"${analisis['resumen']['total_ingresos']:,.2f}"
+        )
+    
+    with col2:
+        st.metric(
+            "💸 Gastos Totales",
+            f"${analisis['resumen']['total_gastos']:,.2f}",
+            delta=f"-${analisis['resumen']['total_gastos']:,.2f}",
+            delta_color="inverse"
+        )
+    
+    with col3:
+        st.metric(
+            "💰 Ahorro Neto",
+            f"${analisis['resumen']['ahorro_neto']:,.2f}",
+            delta=f"{analisis['resumen']['tasa_ahorro']:.1f}%"
+        )
+    
+    with col4:
+        st.metric(
+            "📈 Proyección 3 Meses",
+            f"${analisis['predicciones']['ahorro_3_meses']:,.2f}",
+            delta="+5%"
+        )
+    
+    st.markdown("---")
+    
+    # Gráficos y análisis
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📊 Distribución de Gastos")
+        if not transacciones.empty:
+            gastos_categoria = transacciones[transacciones['tipo'] == 'gasto'].groupby('categoria')['monto'].sum()
+            if not gastos_categoria.empty:
+                fig = px.pie(
+                    values=gastos_categoria.values,
+                    names=gastos_categoria.index,
+                    hole=0.4,
+                    color_discrete_sequence=px.colors.qualitative.Set3
+                )
+                fig.update_layout(showlegend=True, height=400)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No hay gastos registrados")
+        else:
+            st.info("No hay transacciones en este período")
+        
+        # Tendencias
+        st.subheader("📈 Tendencias de Gastos")
+        if not transacciones.empty:
+            transacciones['fecha'] = pd.to_datetime(transacciones['fecha'])
+            gastos_diarios = transacciones[transacciones['tipo'] == 'gasto'].groupby('fecha')['monto'].sum().reset_index()
+            
+            if not gastos_diarios.empty:
+                fig = px.line(
+                    gastos_diarios,
+                    x='fecha',
+                    y='monto',
+                    title='Evolución de Gastos Diarios'
+                )
+                fig.update_layout(height=300)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No hay gastos para mostrar tendencias")
+        else:
+            st.info("No hay datos de tendencias")
+    
+    with col2:
+        st.subheader("🎯 Presupuesto vs Realidad")
+        if not transacciones.empty and not presupuestos.empty:
+            gastos_categoria = transacciones[transacciones['tipo'] == 'gasto'].groupby('categoria')['monto'].sum()
+            presupuestos_dict = presupuestos.set_index('categoria')['monto_maximo'].to_dict()
+            
+            comparacion_data = []
+            for cat in set(gastos_categoria.index) & set(presupuestos_dict.keys()):
+                gasto_real = gastos_categoria.get(cat, 0)
+                presupuesto = presupuestos_dict.get(cat, 0)
+                comparacion_data.append({
+                    'Categoría': cat,
+                    'Gasto Real': gasto_real,
+                    'Presupuesto': presupuesto,
+                    'Diferencia': presupuesto - gasto_real
+                })
+            
+            if comparacion_data:
+                df_comparacion = pd.DataFrame(comparacion_data)
+                
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    name='Gasto Real',
+                    x=df_comparacion['Categoría'],
+                    y=df_comparacion['Gasto Real'],
+                    marker_color='#EF553B'
+                ))
+                fig.add_trace(go.Bar(
+                    name='Presupuesto',
+                    x=df_comparacion['Categoría'],
+                    y=df_comparacion['Presupuesto'],
+                    marker_color='#00CC96'
+                ))
+                
+                fig.update_layout(barmode='group', height=400)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No hay categorías comunes para comparar")
+        else:
+            st.info("Configura presupuestos para ver comparaciones")
+        
+        # Alertas y recomendaciones
+        st.subheader("💡 Recomendaciones")
+        for rec in analisis['recomendaciones']:
+            st.info(rec)
+        
+        if analisis['alertas']:
+            st.subheader("⚠️ Alertas")
+            for alerta in analisis['alertas']:
+                st.warning(alerta)
+    
+    # Análisis detallado
+    st.markdown("---")
+    st.subheader("📋 Análisis Detallado")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**Transacciones Recientes**")
+        if not transacciones.empty:
+            st.dataframe(
+                transacciones.sort_values('fecha', ascending=False).head(10)[
+                    ['fecha', 'categoria', 'descripcion', 'monto', 'tipo']
+                ],
+                use_container_width=True
+            )
+        else:
+            st.info("No hay transacciones")
+    
+    with col2:
+        st.write("**Estadísticas Descriptivas**")
+        if not transacciones.empty:
+            gastos = transacciones[transacciones['tipo'] == 'gasto']['monto']
+            stats_data = {
+                'Métrica': [
+                    'Total Transacciones',
+                    'Promedio Gasto',
+                    'Gasto Máximo',
+                    'Gasto Mínimo',
+                    'Desviación Estándar'
+                ],
+                'Valor': [
+                    len(transacciones),
+                    f"${gastos.mean():.2f}" if not gastos.empty else "$0.00",
+                    f"${gastos.max():.2f}" if not gastos.empty else "$0.00",
+                    f"${gastos.min():.2f}" if not gastos.empty else "$0.00",
+                    f"${gastos.std():.2f}" if not gastos.empty else "$0.00"
+                ]
+            }
+            st.dataframe(pd.DataFrame(stats_data), use_container_width=True)
+        else:
+            st.info("No hay estadísticas")
+    
+    # Generar PDF si se solicitó
+    if st.session_state.get('generar_pdf', False):
+        with st.spinner('📄 Generando reporte PDF...'):
+            try:
+                pdf_bytes = generar_reporte_pdf(usuario_nombre, transacciones, analisis, presupuestos)
+                
+                b64 = base64.b64encode(pdf_bytes).decode()
+                href = f'<a href="data:application/pdf;base64,{b64}" download="reporte_financiero_{datetime.now().strftime("%Y%m%d_%H%M%S")}.pdf" style="display: inline-block; padding: 0.5rem 1rem; background-color: #FF4B4B; color: white; text-decoration: none; border-radius: 0.5rem; font-weight: bold;">📥 Descargar Reporte PDF</a>'
+                
+                st.success("✅ ¡Reporte PDF generado exitosamente!")
+                st.markdown(href, unsafe_allow_html=True)
+                st.balloons()
+                
+            except Exception as e:
+                st.error(f"❌ Error al generar PDF: {str(e)}")
+            
+            st.session_state['generar_pdf'] = False
+
+def pagina_mantenedores(db: DatabaseManager, usuario_mgr: UsuarioManager, 
+                        transaccion_mgr: TransaccionManager, presupuesto_mgr: PresupuestoManager,
+                        alerta_mgr: AlertaManager):
+    """Página de mantenedores"""
+    st.title("⚙️ Sistema de Mantenedores")
+    st.markdown("---")
+    
+    menu = st.sidebar.selectbox(
+        "Seleccionar Mantenedor",
+        ["👥 Usuarios", "💳 Transacciones", "🎯 Presupuestos", "⚠️ Alertas"]
+    )
+    
+    # === MANTENEDOR DE USUARIOS ===
+    if menu == "👥 Usuarios":
+        st.header("Gestión de Usuarios")
+        
+        tab1, tab2, tab3 = st.tabs(["📋 Listar", "➕ Crear", "✏️ Editar/Eliminar"])
+        
+        with tab1:
+            df_usuarios = usuario_mgr.listar_usuarios()
+            if not df_usuarios.empty:
+                st.dataframe(df_usuarios, use_container_width=True)
+                
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Usuarios", len(df_usuarios))
+                with col2:
+                    plan_counts = df_usuarios['plan_suscripcion'].value_counts()
+                    st.metric("Plan Premium", plan_counts.get('premium', 0))
+                with col3:
+                    st.metric("Plan Básico", plan_counts.get('basico', 0))
+            else:
+                st.info("No hay usuarios registrados")
+        
+        with tab2:
+            with st.form("form_crear_usuario"):
+                st.subheader("Crear Nuevo Usuario")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    email = st.text_input("Email*", placeholder="usuario@ejemplo.com")
+                    nombre = st.text_input("Nombre*", placeholder="Juan Pérez")
+                
+                with col2:
+                    plan = st.selectbox("Plan de Suscripción", ["basico", "premium", "enterprise"])
+                
+                submitted = st.form_submit_button("Crear Usuario", use_container_width=True)
+                
+                if submitted:
+                    if email and nombre:
+                        try:
+                            resultado = usuario_mgr.crear_usuario(email, nombre, plan)
+                            st.success(f"✅ Usuario creado: {resultado['nombre']}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
+                    else:
+                        st.warning("⚠️ Complete todos los campos obligatorios")
+        
+        with tab3:
+            df_usuarios = usuario_mgr.listar_usuarios()
+            if not df_usuarios.empty:
+                usuario_seleccionado = st.selectbox(
+                    "Seleccionar Usuario",
+                    options=df_usuarios['id'].tolist(),
+                    format_func=lambda x: df_usuarios[df_usuarios['id']==x]['nombre'].values[0]
+                )
+                
+                if usuario_seleccionado:
+                    usuario_data = df_usuarios[df_usuarios['id']==usuario_seleccionado].iloc[0]
+                    
+                    with st.form("form_editar_usuario"):
+                        st.subheader("Editar Usuario")
+                        
+                        nuevo_nombre = st.text_input("Nombre", value=usuario_data['nombre'])
+                        nuevo_email = st.text_input("Email", value=usuario_data['email'])
+                        nuevo_plan = st.selectbox(
+                            "Plan", 
+                            ["basico", "premium", "enterprise"],
+                            index=["basico", "premium", "enterprise"].index(usuario_data['plan_suscripcion'])
+                        )
+                        
+                        col_a, col_b = st.columns(2)
+                        with col_a:
+                            actualizar = st.form_submit_button("💾 Actualizar", use_container_width=True)
+                        with col_b:
+                            eliminar = st.form_submit_button("🗑️ Eliminar", use_container_width=True, type="secondary")
+                        
+                        if actualizar:
+                            datos = {
+                                'nombre': nuevo_nombre,
+                                'email': nuevo_email,
+                                'plan_suscripcion': nuevo_plan
+                            }
+                            usuario_mgr.actualizar_usuario(usuario_seleccionado, datos)
+                            st.success("✅ Usuario actualizado")
+                            st.rerun()
+                        
+                        if eliminar:
+                            if st.session_state.get('confirmar_eliminar'):
+                                usuario_mgr.eliminar_usuario(usuario_seleccionado)
+                                st.success("✅ Usuario eliminado")
+                                st.session_state.confirmar_eliminar = False
+                                st.rerun()
+                            else:
+                                st.session_state.confirmar_eliminar = True
+                                st.warning("⚠️ Presione nuevamente para confirmar")
+    
+    # === MANTENEDOR DE TRANSACCIONES ===
+    elif menu == "💳 Transacciones":
+        st.header("Gestión de Transacciones")
+        
+        df_usuarios = usuario_mgr.listar_usuarios()
+        if df_usuarios.empty:
+            st.warning("No hay usuarios registrados")
+            return
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            usuario_filtro = st.selectbox(
+                "Filtrar por Usuario",
+                options=['Todos'] + df_usuarios['id'].tolist(),
+                format_func=lambda x: 'Todos' if x == 'Todos' else df_usuarios[df_usuarios['id']==x]['nombre'].values[0]
+            )
+        
+        with col2:
+            dias_filtro = st.selectbox("Período", [7, 30, 90, 365], index=1)
+        
+        tab1, tab2, tab3 = st.tabs(["📋 Listar", "➕ Crear", "✏️ Editar/Eliminar"])
+        
+        with tab1:
+            usuario_id = None if usuario_filtro == 'Todos' else usuario_filtro
+            df_transacciones = transaccion_mgr.listar_transacciones(usuario_id, dias_filtro)
+            
+            if not df_transacciones.empty:
+                st.dataframe(df_transacciones, use_container_width=True)
+                
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Total Transacciones", len(df_transacciones))
+                with col2:
+                    ingresos = df_transacciones[df_transacciones['tipo']=='ingreso']['monto'].sum()
+                    st.metric("Ingresos", f"${ingresos:,.2f}")
+                with col3:
+                    gastos = df_transacciones[df_transacciones['tipo']=='gasto']['monto'].sum()
+                    st.metric("Gastos", f"${gastos:,.2f}")
+                with col4:
+                    st.metric("Balance", f"${ingresos-gastos:,.2f}")
+            else:
+                st.info("No hay transacciones en el período seleccionado")
+        
+        with tab2:
+            with st.form("form_crear_transaccion"):
+                st.subheader("Nueva Transacción")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    usuario_trans = st.selectbox(
+                        "Usuario*",
+                        options=df_usuarios['id'].tolist(),
+                        format_func=lambda x: df_usuarios[df_usuarios['id']==x]['nombre'].values[0]
+                    )
+                    monto = st.number_input("Monto*", min_value=0.01, step=0.01)
+                    tipo = st.selectbox("Tipo*", ["gasto", "ingreso"])
+                
+                with col2:
+                    categorias = ['Alimentación', 'Transporte', 'Entretenimiento', 'Servicios', 
+                                 'Salud', 'Educación', 'Ingresos', 'Otros']
+                    categoria = st.selectbox("Categoría*", categorias)
+                    fecha = st.date_input("Fecha*", value=datetime.now())
+                
+                descripcion = st.text_area("Descripción*", placeholder="Detalle de la transacción")
+                
+                submitted = st.form_submit_button("Crear Transacción", use_container_width=True)
+                
+                if submitted:
+                    if usuario_trans and monto and categoria and descripcion:
+                        try:
+                            transaccion_mgr.crear_transaccion(
+                                usuario_trans, monto, categoria, descripcion, 
+                                fecha.strftime('%Y-%m-%d'), tipo, ''
+                            )
+                            st.success("✅ Transacción creada correctamente")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
+                    else:
+                        st.warning("⚠️ Complete todos los campos obligatorios")
+        
+        with tab3:
+            df_trans_edit = transaccion_mgr.listar_transacciones(dias=30)
+            if not df_trans_edit.empty:
+                trans_seleccionada = st.selectbox(
+                    "Seleccionar Transacción",
+                    options=df_trans_edit['id'].tolist(),
+                    format_func=lambda x: f"{df_trans_edit[df_trans_edit['id']==x]['descripcion'].values[0][:30]} - ${df_trans_edit[df_trans_edit['id']==x]['monto'].values[0]}"
+                )
+                
+                if trans_seleccionada:
+                    trans_data = df_trans_edit[df_trans_edit['id']==trans_seleccionada].iloc[0]
+                    
+                    with st.form("form_editar_transaccion"):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            nuevo_monto = st.number_input("Monto", value=float(trans_data['monto']))
+                            nueva_categoria = st.text_input("Categoría", value=trans_data['categoria'])
+                        with col2:
+                            nuevo_tipo = st.selectbox("Tipo", ["gasto", "ingreso"], 
+                                                     index=0 if trans_data['tipo']=='gasto' else 1)
+                            nueva_fecha = st.date_input("Fecha", value=pd.to_datetime(trans_data['fecha']))
+                        
+                        nueva_desc = st.text_area("Descripción", value=trans_data['descripcion'])
+                        
+                        col_a, col_b = st.columns(2)
+                        with col_a:
+                            actualizar = st.form_submit_button("💾 Actualizar", use_container_width=True)
+                        with col_b:
+                            eliminar = st.form_submit_button("🗑️ Eliminar", use_container_width=True)
+                        
+                        if actualizar:
+                            datos = {
+                                'monto': nuevo_monto,
+                                'categoria': nueva_categoria,
+                                'tipo': nuevo_tipo,
+                                'fecha': nueva_fecha.strftime('%Y-%m-%d'),
+                                'descripcion': nueva_desc
+                            }
+                            transaccion_mgr.actualizar_transaccion(trans_seleccionada, datos)
+                            st.success("✅ Transacción actualizada")
+                            st.rerun()
+                        
+                        if eliminar:
+                            transaccion_mgr.eliminar_transaccion(trans_seleccionada)
+                            st.success("✅ Transacción eliminada")
+                            st.rerun()
+            else:
+                st.info("No hay transacciones para editar")
+    
+    # === MANTENEDOR DE PRESUPUESTOS ===
+    elif menu == "🎯 Presupuestos":
+        st.header("Gestión de Presupuestos")
+        
+        tab1, tab2, tab3 = st.tabs(["📋 Listar", "➕ Crear", "✏️ Editar/Eliminar"])
+        
+        with tab1:
+            df_presupuestos = presupuesto_mgr.listar_presupuestos()
+            if not df_presupuestos.empty:
+                st.dataframe(df_presupuestos, use_container_width=True)
+                
+                fig = px.bar(df_presupuestos, x='categoria', y='monto_maximo', 
+                           title='Presupuestos por Categoría', color='periodo')
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No hay presupuestos configurados")
+        
+        with tab2:
+            df_usuarios = usuario_mgr.listar_usuarios()
+            if not df_usuarios.empty:
+                with st.form("form_crear_presupuesto"):
+                    st.subheader("Nuevo Presupuesto")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        usuario_pres = st.selectbox(
+                            "Usuario*",
+                            options=df_usuarios['id'].tolist(),
+                            format_func=lambda x: df_usuarios[df_usuarios['id']==x]['nombre'].values[0]
+                        )
+                        categoria_pres = st.selectbox("Categoría*", 
+                            ['Alimentación', 'Transporte', 'Entretenimiento', 'Servicios', 
+                             'Salud', 'Educación', 'Otros'])
+                    
+                    with col2:
+                        monto_max = st.number_input("Monto Máximo*", min_value=0.01, step=10.0)
+                        periodo_pres = st.selectbox("Período*", ['mensual', 'semanal', 'anual'])
+                    
+                    submitted = st.form_submit_button("Crear Presupuesto", use_container_width=True)
+                    
+                    if submitted:
+                        try:
+                            presupuesto_mgr.crear_presupuesto(
+                                usuario_pres, categoria_pres, monto_max, periodo_pres
+                            )
+                            st.success("✅ Presupuesto creado")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
+            else:
+                st.warning("No hay usuarios registrados")
+        
+        with tab3:
+            df_pres_edit = presupuesto_mgr.listar_presupuestos()
+            if not df_pres_edit.empty:
+                pres_seleccionado = st.selectbox(
+                    "Seleccionar Presupuesto",
+                    options=df_pres_edit['id'].tolist(),
+                    format_func=lambda x: f"{df_pres_edit[df_pres_edit['id']==x]['categoria'].values[0]} - ${df_pres_edit[df_pres_edit['id']==x]['monto_maximo'].values[0]}"
+                )
+                
+                if pres_seleccionado:
+                    pres_data = df_pres_edit[df_pres_edit['id']==pres_seleccionado].iloc[0]
+                    
+                    with st.form("form_editar_presupuesto"):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            nueva_categoria = st.text_input("Categoría", value=pres_data['categoria'])
+                            nuevo_monto = st.number_input("Monto Máximo", value=float(pres_data['monto_maximo']))
+                        with col2:
+                            nuevo_periodo = st.selectbox("Período", 
+                                ['mensual', 'semanal', 'anual'],
+                                index=['mensual', 'semanal', 'anual'].index(pres_data['periodo']))
+                        
+                        col_a, col_b = st.columns(2)
+                        with col_a:
+                            actualizar = st.form_submit_button("💾 Actualizar", use_container_width=True)
+                        with col_b:
+                            eliminar = st.form_submit_button("🗑️ Eliminar", use_container_width=True)
+                        
+                        if actualizar:
+                            datos = {
+                                'categoria': nueva_categoria,
+                                'monto_maximo': nuevo_monto,
+                                'periodo': nuevo_periodo
+                            }
+                            presupuesto_mgr.actualizar_presupuesto(pres_seleccionado, datos)
+                            st.success("✅ Presupuesto actualizado")
+                            st.rerun()
+                        
+                        if eliminar:
+                            presupuesto_mgr.eliminar_presupuesto(pres_seleccionado)
+                            st.success("✅ Presupuesto eliminado")
+                            st.rerun()
+    
+    # === MANTENEDOR DE ALERTAS ===
+    elif menu == "⚠️ Alertas":
+        st.header("Gestión de Alertas")
+        
+        tab1, tab2 = st.tabs(["📋 Listar", "➕ Crear"])
+        
+        with tab1:
+            solo_no_leidas = st.checkbox("Solo alertas no leídas")
+            
+            df_alertas = alerta_mgr.listar_alertas(solo_no_leidas=solo_no_leidas)
+            
+            if not df_alertas.empty:
+                for idx, alerta in df_alertas.iterrows():
+                    severidad_icon = {"baja": "🟢", "media": "🟡", "alta": "🔴"}
+                    icon = severidad_icon.get(alerta['severidad'], "⚪")
+                    
+                    with st.expander(f"{icon} {alerta['tipo']} - {alerta['mensaje'][:50]}..."):
+                        st.write(f"**Mensaje:** {alerta['mensaje']}")
+                        st.write(f"**Severidad:** {alerta['severidad']}")
+                        st.write(f"**Fecha:** {alerta['created_at']}")
+                        st.write(f"**Estado:** {'✅ Leída' if alerta['leida'] else '⏳ No leída'}")
+                        
+                        if not alerta['leida']:
+                            if st.button(f"Marcar como leída", key=f"leer_{alerta['id']}"):
+                                alerta_mgr.marcar_leida(alerta['id'])
+                                st.success("✅ Alerta marcada como leída")
+                                st.rerun()
+            else:
+                st.info("No hay alertas para mostrar")
+        
+        with tab2:
+            df_usuarios = usuario_mgr.listar_usuarios()
+            if not df_usuarios.empty:
+                with st.form("form_crear_alerta"):
+                    st.subheader("Nueva Alerta")
+                    
+                    usuario_alerta = st.selectbox(
+                        "Usuario*",
+                        options=df_usuarios['id'].tolist(),
+                        format_func=lambda x: df_usuarios[df_usuarios['id']==x]['nombre'].values[0]
+                    )
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        tipo_alerta = st.selectbox("Tipo*", 
+                            ['presupuesto_excedido', 'gasto_inusual', 'recordatorio', 'sugerencia'])
+                    with col2:
+                        severidad_alerta = st.selectbox("Severidad*", ['baja', 'media', 'alta'])
+                    
+                    mensaje_alerta = st.text_area("Mensaje*", placeholder="Descripción de la alerta")
+                    
+                    submitted = st.form_submit_button("Crear Alerta", use_container_width=True)
+                    
+                    if submitted:
+                        if mensaje_alerta:
+                            try:
+                                alerta_mgr.crear_alerta(
+                                    usuario_alerta, tipo_alerta, mensaje_alerta, severidad_alerta
+                                )
+                                st.success("✅ Alerta creada")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Error: {str(e)}")
+                        else:
+                            st.warning("⚠️ Complete el mensaje de la alerta")
+            else:
+                st.warning("No hay usuarios registrados")
+
+# ==================== MAIN ====================
+
+def main():
+    # Inicializar managers
+    db = DatabaseManager()
+    
+    if db.client is None:
+        st.error("❌ No se pudo conectar a la base de datos. Verifica las credenciales en secrets.")
+        return
+    
+    usuario_mgr = UsuarioManager(db)
+    transaccion_mgr = TransaccionManager(db)
+    presupuesto_mgr = PresupuestoManager(db)
+    alerta_mgr = AlertaManager(db)
+    
+    # Menú principal en sidebar
+    st.sidebar.title("🏦 Asesor Financiero IA")
+    st.sidebar.markdown("---")
+    
+    pagina = st.sidebar.radio(
+        "Navegación",
+        ["📊 Dashboard", "⚙️ Mantenedores"],
+        label_visibility="collapsed"
+    )
+    
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 📖 Ayuda")
+    st.sidebar.info("""
+    **Dashboard**: Visualiza tus finanzas, gastos y proyecciones.
+    
+    **Mantenedores**: Administra usuarios, transacciones, presupuestos y alertas.
+    """)
+    
+    # Renderizar página seleccionada
+    if pagina == "📊 Dashboard":
+        pagina_dashboard(db, usuario_mgr, transaccion_mgr, presupuesto_mgr, alerta_mgr)
+    else:
+        pagina_mantenedores(db, usuario_mgr, transaccion_mgr, presupuesto_mgr, alerta_mgr)
+
+if __name__ == "__main__":
+    main()
