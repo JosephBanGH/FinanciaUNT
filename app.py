@@ -753,7 +753,7 @@ class AsesorFinancieroAntiguo:
     def agregar_gasto(self, usuario_id, monto, categoria, descripcion):
         """Agregar un nuevo gasto"""
         nueva_transaccion = {
-            'id': f'trx_{int(time.time())}',
+            'id': f'trx_{int(datetime.time())}',
             'usuario_id': usuario_id,
             'fecha': datetime.now().strftime('%Y-%m-%d'),
             'categoria': categoria,
