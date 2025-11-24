@@ -274,7 +274,7 @@ class PDFReport(FPDF):
     def footer(self):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
-        self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
+        self.cell(0, 10, f'Pagina {self.page_no()}', 0, 0, 'C')
     
     def chapter_title(self, title):
         self.set_font('Arial', 'B', 14)
@@ -294,11 +294,122 @@ class PDFReport(FPDF):
         self.cell(60, 8, label + ':', 0, 0)
         self.set_font('Arial', '', 11)
         self.cell(0, 8, str(value), 0, 1)
+    
+    def add_image_from_bytes(self, img_bytes, x=None, y=None, w=0, h=0):
+        """Agregar imagen desde bytes"""
+        # Guardar temporalmente la imagen
+        temp_file = f"temp_chart_{datetime.now().timestamp()}.png"
+        with open(temp_file, 'wb') as f:
+            f.write(img_bytes)
+        
+        # Agregar al PDF
+        if x is None:
+            x = self.get_x()
+        if y is None:
+            y = self.get_y()
+        
+        self.image(temp_file, x=x, y=y, w=w, h=h)
+        
+        # Limpiar archivo temporal
+        import os
+        try:
+            os.remove(temp_file)
+        except:
+            pass
+
+
+def generar_graficos(transacciones: pd.DataFrame, analisis: Dict) -> Dict[str, bytes]:
+    """Generar gráficos en formato PNG para el PDF"""
+    graficos = {}
+    
+    if transacciones.empty:
+        return graficos
+    
+    try:
+        # 1. Gráfico de distribución de gastos (pie chart)
+        gastos_categoria = transacciones[transacciones['tipo'] == 'gasto'].groupby('categoria')['monto'].sum()
+        if not gastos_categoria.empty:
+            fig = px.pie(
+                values=gastos_categoria.values,
+                names=gastos_categoria.index,
+                title='Distribucion de Gastos por Categoria',
+                hole=0.4,
+                color_discrete_sequence=px.colors.qualitative.Set3
+            )
+            fig.update_layout(
+                width=700,
+                height=500,
+                showlegend=True,
+                font=dict(size=12)
+            )
+            graficos['distribucion_gastos'] = fig.to_image(format="png", width=700, height=500)
+        
+        # 2. Gráfico de tendencias (line chart)
+        transacciones_copy = transacciones.copy()
+        transacciones_copy['fecha'] = pd.to_datetime(transacciones_copy['fecha'])
+        gastos_diarios = transacciones_copy[transacciones_copy['tipo'] == 'gasto'].groupby('fecha')['monto'].sum().reset_index()
+        
+        if not gastos_diarios.empty:
+            fig = px.line(
+                gastos_diarios,
+                x='fecha',
+                y='monto',
+                title='Tendencia de Gastos Diarios',
+                markers=True
+            )
+            fig.update_layout(
+                width=700,
+                height=400,
+                xaxis_title='Fecha',
+                yaxis_title='Monto ($)',
+                font=dict(size=12)
+            )
+            graficos['tendencia_gastos'] = fig.to_image(format="png", width=700, height=400)
+        
+        # 3. Gráfico de resumen (métricas)
+        fig = go.Figure()
+        
+        categorias_metricas = ['Ingresos', 'Gastos', 'Ahorro Neto']
+        valores_metricas = [
+            analisis['resumen']['total_ingresos'],
+            analisis['resumen']['total_gastos'],
+            analisis['resumen']['ahorro_neto']
+        ]
+        colores = ['#00CC96', '#EF553B', '#636EFA']
+        
+        fig.add_trace(go.Bar(
+            x=categorias_metricas,
+            y=valores_metricas,
+            marker_color=colores,
+            text=[f'${v:,.2f}' for v in valores_metricas],
+            textposition='auto',
+        ))
+        
+        fig.update_layout(
+            title='Resumen Financiero',
+            width=700,
+            height=400,
+            xaxis_title='',
+            yaxis_title='Monto ($)',
+            showlegend=False,
+            font=dict(size=12)
+        )
+        
+        graficos['resumen_financiero'] = fig.to_image(format="png", width=700, height=400)
+        
+    except Exception as e:
+        print(f"Error generando gráficos: {str(e)}")
+    
+    return graficos
 
 
 def generar_reporte_pdf(usuario_nombre: str, transacciones: pd.DataFrame, 
                         analisis: Dict, presupuestos: pd.DataFrame) -> bytes:
-    """Generar reporte PDF completo"""
+    """Generar reporte PDF completo con gráficos"""
+    
+    # Generar gráficos
+    graficos = generar_graficos(transacciones, analisis)
+    
     pdf = PDFReport()
     pdf.add_page()
     
@@ -316,7 +427,16 @@ def generar_reporte_pdf(usuario_nombre: str, transacciones: pd.DataFrame,
     pdf.add_metric('Tasa de ahorro', f"{analisis['resumen']['tasa_ahorro']:.1f}%")
     pdf.ln(5)
     
-    # Análisis por categorías
+    # Agregar gráfico de resumen financiero
+    if 'resumen_financiero' in graficos:
+        pdf.chapter_title('GRAFICO: RESUMEN FINANCIERO')
+        pdf.add_image_from_bytes(graficos['resumen_financiero'], x=10, w=190)
+        pdf.ln(10)
+    
+    # Nueva página para distribución de gastos
+    pdf.add_page()
+    
+    # Análisis por categorías (tabla)
     if not transacciones.empty:
         pdf.chapter_title('GASTOS POR CATEGORIA')
         gastos_cat = transacciones[transacciones['tipo'] == 'gasto'].groupby('categoria')['monto'].sum().sort_values(ascending=False)
@@ -329,11 +449,34 @@ def generar_reporte_pdf(usuario_nombre: str, transacciones: pd.DataFrame,
             pdf.cell(0, 7, f'({porcentaje:.1f}%)', 0, 1)
         pdf.ln(5)
     
+    # Agregar gráfico de distribución
+    if 'distribucion_gastos' in graficos:
+        pdf.chapter_title('GRAFICO: DISTRIBUCION DE GASTOS')
+        pdf.add_image_from_bytes(graficos['distribucion_gastos'], x=10, w=190)
+        pdf.ln(10)
+    
+    # Nueva página para tendencias
+    pdf.add_page()
+    
+    # Agregar gráfico de tendencias
+    if 'tendencia_gastos' in graficos:
+        pdf.chapter_title('GRAFICO: TENDENCIA DE GASTOS')
+        pdf.add_image_from_bytes(graficos['tendencia_gastos'], x=10, w=190)
+        pdf.ln(10)
+    
     # Comparación con presupuestos
     if not presupuestos.empty and not transacciones.empty:
         pdf.chapter_title('COMPARACION CON PRESUPUESTOS')
         gastos_cat = transacciones[transacciones['tipo'] == 'gasto'].groupby('categoria')['monto'].sum()
         presupuestos_dict = presupuestos.set_index('categoria')['monto_maximo'].to_dict()
+        
+        # Encabezados
+        pdf.set_font('Arial', 'B', 10)
+        pdf.cell(50, 7, 'Categoria', 1, 0, 'C')
+        pdf.cell(35, 7, 'Gasto Real', 1, 0, 'C')
+        pdf.cell(35, 7, 'Presupuesto', 1, 0, 'C')
+        pdf.cell(30, 7, '% Uso', 1, 0, 'C')
+        pdf.cell(30, 7, 'Estado', 1, 1, 'C')
         
         for categoria in set(gastos_cat.index) & set(presupuestos_dict.keys()):
             gasto = gastos_cat[categoria]
@@ -341,17 +484,18 @@ def generar_reporte_pdf(usuario_nombre: str, transacciones: pd.DataFrame,
             cumplimiento = (gasto / presupuesto * 100) if presupuesto > 0 else 0
             estado = 'OK' if cumplimiento <= 100 else 'EXCEDIDO'
             
-            pdf.set_font('Arial', '', 10)
-            pdf.cell(50, 7, f'  {categoria}', 0, 0)
-            pdf.cell(35, 7, f'${gasto:,.2f}', 0, 0)
-            pdf.cell(35, 7, f'${presupuesto:,.2f}', 0, 0)
-            pdf.cell(30, 7, f'{cumplimiento:.1f}%', 0, 0)
-            pdf.set_font('Arial', 'B', 10)
+            pdf.set_font('Arial', '', 9)
+            pdf.cell(50, 6, f'{categoria[:20]}', 1, 0)
+            pdf.cell(35, 6, f'${gasto:,.2f}', 1, 0, 'R')
+            pdf.cell(35, 6, f'${presupuesto:,.2f}', 1, 0, 'R')
+            pdf.cell(30, 6, f'{cumplimiento:.1f}%', 1, 0, 'C')
+            
+            pdf.set_font('Arial', 'B', 9)
             if estado == 'EXCEDIDO':
                 pdf.set_text_color(255, 0, 0)
             else:
                 pdf.set_text_color(0, 128, 0)
-            pdf.cell(0, 7, estado, 0, 1)
+            pdf.cell(30, 6, estado, 1, 1, 'C')
             pdf.set_text_color(0, 0, 0)
         pdf.ln(5)
     
@@ -366,7 +510,7 @@ def generar_reporte_pdf(usuario_nombre: str, transacciones: pd.DataFrame,
     # Alertas
     if analisis['alertas']:
         pdf.chapter_title('ALERTAS IMPORTANTES')
-        for i, alerta in enumerate(analisis['alertas'], 1):
+        for alerta in analisis['alertas']:
             pdf.set_font('Arial', 'B', 10)
             pdf.set_text_color(255, 102, 0)
             pdf.multi_cell(0, 7, f'! {alerta}')
@@ -377,32 +521,40 @@ def generar_reporte_pdf(usuario_nombre: str, transacciones: pd.DataFrame,
     # Predicciones
     pdf.chapter_title('PROYECCIONES FINANCIERAS')
     pdf.add_metric('Ahorro proyectado (3 meses)', f"${analisis['predicciones']['ahorro_3_meses']:,.2f}")
-    pdf.add_metric('Gastos del próximo mes', f"${analisis['predicciones']['proyeccion_gastos']:,.2f}")
+    pdf.add_metric('Gastos del proximo mes', f"${analisis['predicciones']['proyeccion_gastos']:,.2f}")
     
     # Transacciones recientes
     if not transacciones.empty:
         pdf.add_page()
-        pdf.chapter_title('TRANSACCIONES RECIENTES (ULTIMAS 15)')
+        pdf.chapter_title('TRANSACCIONES RECIENTES (ULTIMAS 20)')
         
-        pdf.set_font('Arial', 'B', 9)
-        pdf.cell(25, 7, 'Fecha', 1, 0, 'C')
-        pdf.cell(40, 7, 'Categoria', 1, 0, 'C')
-        pdf.cell(80, 7, 'Descripcion', 1, 0, 'C')
-        pdf.cell(25, 7, 'Monto', 1, 0, 'C')
-        pdf.cell(20, 7, 'Tipo', 1, 1, 'C')
+        pdf.set_font('Arial', 'B', 8)
+        pdf.cell(25, 6, 'Fecha', 1, 0, 'C')
+        pdf.cell(35, 6, 'Categoria', 1, 0, 'C')
+        pdf.cell(75, 6, 'Descripcion', 1, 0, 'C')
+        pdf.cell(30, 6, 'Monto', 1, 0, 'C')
+        pdf.cell(20, 6, 'Tipo', 1, 1, 'C')
         
-        pdf.set_font('Arial', '', 8)
-        transacciones_sorted = transacciones.sort_values('fecha', ascending=False).head(15)
+        pdf.set_font('Arial', '', 7)
+        transacciones_sorted = transacciones.sort_values('fecha', ascending=False).head(20)
         
         for _, row in transacciones_sorted.iterrows():
-            pdf.cell(25, 6, str(row['fecha'])[:10], 1, 0)
-            pdf.cell(40, 6, str(row['categoria'])[:18], 1, 0)
-            pdf.cell(80, 6, str(row['descripcion'])[:40], 1, 0)
-            pdf.cell(25, 6, f"${row['monto']:.2f}", 1, 0, 'R')
-            pdf.cell(20, 6, str(row['tipo']), 1, 1, 'C')
+            pdf.cell(25, 5, str(row['fecha'])[:10], 1, 0)
+            pdf.cell(35, 5, str(row['categoria'])[:15], 1, 0)
+            pdf.cell(75, 5, str(row['descripcion'])[:35], 1, 0)
+            pdf.cell(30, 5, f"${row['monto']:.2f}", 1, 0, 'R')
+            pdf.cell(20, 5, str(row['tipo'])[:8], 1, 1, 'C')
     
-    # Convertir a bytes
-    return pdf.output(dest='S').encode('latin1')
+    # FIX: Usar output() sin encode
+    try:
+        # Para fpdf2 (versión 2.x)
+        pdf_output = pdf.output()
+        if isinstance(pdf_output, str):
+            return pdf_output.encode('latin1')
+        return pdf_output
+    except:
+        # Para fpdf (versión 1.x)
+        return pdf.output(dest='S').encode('latin1')
 
 # ==================== PÁGINAS ====================
 
@@ -448,9 +600,18 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
                     asesor_pdf = AsesorFinanciero(transaccion_mgr, presupuesto_mgr)
                     analisis_pdf = asesor_pdf.get_analisis_ia(transacciones_pdf, presupuestos_pdf)
                     
-                    pdf_bytes = generar_reporte_pdf(usuario_nombre, transacciones_pdf, analisis_pdf, presupuestos_pdf)
+                    # Generar PDF
+                    pdf_bytes = generar_reporte_pdf(
+                        usuario_nombre, 
+                        transacciones_pdf, 
+                        analisis_pdf, 
+                        presupuestos_pdf
+                    )
                     
-                    b64 = base64.b64encode(pdf_bytes).decode()
+                    # Asegurar que sea bytes
+                    if isinstance(pdf_bytes, bytearray):
+                        pdf_bytes = bytes(pdf_bytes)
+                    
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                     
                     st.success("✅ ¡Reporte PDF generado exitosamente!")
@@ -461,9 +622,11 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
                         mime="application/pdf",
                         use_container_width=True
                     )
-                    
+            
                 except Exception as e:
                     st.error(f"❌ Error al generar PDF: {str(e)}")
+                    import traceback
+                    st.code(traceback.format_exc())
 
         mostrar_chat(usuario_id)
         st.divider()
