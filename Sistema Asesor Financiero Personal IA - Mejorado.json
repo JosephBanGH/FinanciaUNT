@@ -1,0 +1,483 @@
+{
+  "name": "Sistema Asesor Financiero Personal IA - Mejorado",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "webhook-transacciones",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "7a87e6f7-569c-4735-8fb8-2c445a496c24",
+      "name": "Webhook Transacciones",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1.1,
+      "position": [
+        -1120,
+        -192
+      ],
+      "webhookId": "webhook-transacciones-id"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "tableId": "usuarios",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "keyValue": "={{ $json.usuario_id }}"
+            }
+          ]
+        }
+      },
+      "id": "54a78964-2979-418a-8b9a-c0246bd8bc54",
+      "name": "Supabase Usuario",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -896,
+        -192
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "ACq6bUJ1gXNK8wP4",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://production.plaid.com/transactions/get",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "plaidApi",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "client_id",
+              "value": "={{ $credentials.plaidClientId }}"
+            },
+            {
+              "name": "secret",
+              "value": "={{ $credentials.plaidSecret }}"
+            },
+            {
+              "name": "access_token",
+              "value": "={{ $node['Supabase Usuario'].json.access_token_plaid }}"
+            },
+            {
+              "name": "start_date",
+              "value": "={{ $now.minus(30, 'days').format('yyyy-MM-dd') }}"
+            },
+            {
+              "name": "end_date",
+              "value": "={{ $now.format('yyyy-MM-dd') }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "63f09cee-1722-4af4-bd51-ad87769fbfdb",
+      "name": "Plaid Transacciones",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -672,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const transacciones = $input.first().json.transactions || [];\nconst usuarioId = $('Supabase Usuario').first().json.id;\n\nconst transaccionesProcesadas = transacciones.map(trans => ({\n  usuario_id: usuarioId,\n  monto: Math.abs(trans.amount),\n  categoria: trans.category && trans.category.length > 0 ? trans.category[0] : 'Otros',\n  descripcion: trans.name || 'Sin descripción',\n  fecha: trans.date,\n  cuenta: trans.account_id,\n  tipo: trans.amount < 0 ? 'gasto' : 'ingreso',\n  metadata: {\n    ubicacion: trans.location || {},\n    merchant: trans.merchant_name || null,\n    transaction_id: trans.transaction_id,\n    pending: trans.pending || false\n  }\n}));\n\nreturn transaccionesProcesadas.map(t => ({ json: t }));"
+      },
+      "id": "626a08be-f904-49ed-9a16-31c89a46e847",
+      "name": "Procesar Transacciones",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert"
+      },
+      "id": "11eba3ef-e9bd-4f8e-827d-6475874e9313",
+      "name": "Supabase Guardar Transacciones",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        -192
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "ACq6bUJ1gXNK8wP4",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "tableId": "presupuestos",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "usuario_id",
+              "keyValue": "={{ $('Supabase Usuario').first().json.id }}"
+            }
+          ]
+        }
+      },
+      "id": "d4c223c6-7dd9-4a32-b8c9-4bf649869697",
+      "name": "Supabase Presupuestos",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        16
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "ACq6bUJ1gXNK8wP4",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const transacciones = $('Procesar Transacciones').all();\nconst presupuestos = $input.all();\nconst usuarioId = $('Supabase Usuario').first().json.id;\n\n// Agrupar gastos por categoría\nconst gastosPorCategoria = {};\ntransacciones.forEach(item => {\n  const t = item.json;\n  if (t.tipo === 'gasto') {\n    if (!gastosPorCategoria[t.categoria]) {\n      gastosPorCategoria[t.categoria] = 0;\n    }\n    gastosPorCategoria[t.categoria] += t.monto;\n  }\n});\n\n// Crear un mapa de presupuestos\nconst presupuestosMap = {};\npresupuestos.forEach(item => {\n  const p = item.json;\n  presupuestosMap[p.categoria] = p.monto_maximo;\n});\n\n// Generar alertas\nconst alertas = [];\nconst hoy = new Date().toISOString();\n\nfor (const [categoria, gastoTotal] of Object.entries(gastosPorCategoria)) {\n  if (presupuestosMap[categoria]) {\n    const presupuesto = presupuestosMap[categoria];\n    const porcentaje = (gastoTotal / presupuesto) * 100;\n    \n    if (porcentaje > 100) {\n      alertas.push({\n        usuario_id: usuarioId,\n        tipo: 'presupuesto_excedido',\n        mensaje: `Has excedido tu presupuesto de ${categoria} en un ${(porcentaje - 100).toFixed(1)}%`,\n        severidad: 'alta',\n        leida: false,\n        created_at: hoy\n      });\n    } else if (porcentaje > 90) {\n      alertas.push({\n        usuario_id: usuarioId,\n        tipo: 'presupuesto_proximo',\n        mensaje: `Estás al ${porcentaje.toFixed(1)}% de tu presupuesto de ${categoria}`,\n        severidad: 'media',\n        leida: false,\n        created_at: hoy\n      });\n    }\n  }\n}\n\n// Detectar gastos inusuales (más del doble del promedio)\nconst montosGastos = transacciones\n  .filter(item => item.json.tipo === 'gasto')\n  .map(item => item.json.monto);\n\nif (montosGastos.length > 0) {\n  const promedio = montosGastos.reduce((a, b) => a + b, 0) / montosGastos.length;\n  const gastosInusuales = montosGastos.filter(m => m > promedio * 2);\n  \n  if (gastosInusuales.length > 0) {\n    alertas.push({\n      usuario_id: usuarioId,\n      tipo: 'gasto_inusual',\n      mensaje: `Se detectaron ${gastosInusuales.length} transacciones con montos inusualmente altos`,\n      severidad: 'media',\n      leida: false,\n      created_at: hoy\n    });\n  }\n}\n\nreturn alertas.map(a => ({ json: a }));"
+      },
+      "id": "6881f78d-9d70-4c5b-830c-b470efdab2de",
+      "name": "Generar Alertas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert"
+      },
+      "id": "6c8ceb14-8cca-48e8-941d-9b6b3553e3f4",
+      "name": "Supabase Guardar Alertas",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        208,
+        16
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "ACq6bUJ1gXNK8wP4",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "chat"
+      },
+      "id": "02b19db2-0340-4832-9d48-27df0bf2ce99",
+      "name": "OpenAI Análisis",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.3,
+      "position": [
+        -16,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const respuestaIA = $input.first().json.message.content;\nconst usuarioId = $('Supabase Usuario').first().json.id;\nconst cantidadTransacciones = $('Procesar Transacciones').all().length;\n\nlet analisisParseado;\ntry {\n  // Intentar parsear el JSON de la respuesta\n  analisisParseado = JSON.parse(respuestaIA);\n} catch (error) {\n  // Si falla el parseo, crear estructura por defecto\n  analisisParseado = {\n    resumen: { total_ingresos: 0, total_gastos: 0, ahorro_neto: 0, tasa_ahorro: 0 },\n    patrones: [],\n    recomendaciones: [\"No se pudo generar análisis detallado\"],\n    alertas: [],\n    predicciones: { ahorro_3_meses: 0, proyeccion_gastos: 0 }\n  };\n}\n\nreturn [{\n  json: {\n    usuario_id: usuarioId,\n    fecha_analisis: new Date().toISOString(),\n    analisis: analisisParseado,\n    analisis_texto: respuestaIA,\n    transacciones_analizadas: cantidadTransacciones,\n    version: '1.0'\n  }\n}];"
+      },
+      "id": "9f50a536-97be-4fea-99c4-cbd5fd8870cb",
+      "name": "Procesar Análisis IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        -192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "insert"
+      },
+      "id": "3b1c3448-9e6c-4eb8-a6c2-b4149e4adb46",
+      "name": "Supabase Guardar Análisis",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        432,
+        -192
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "ACq6bUJ1gXNK8wP4",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "03181a94-753d-45f4-a01e-8a35bad85084",
+      "name": "Cron Diario (8 AM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -1120,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "tableId": "usuarios",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "access_token_plaid"
+            }
+          ]
+        }
+      },
+      "id": "acd6e7b4-e278-4d41-b916-f46fc027f4d9",
+      "name": "Supabase Listar Usuarios Activos",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -896,
+        208
+      ],
+      "credentials": {
+        "supabaseApi": {
+          "id": "ACq6bUJ1gXNK8wP4",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "usuario_id",
+              "name": "usuario_id",
+              "value": "={{ $json.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bf6cbd62-0e13-4329-aafa-38bdfc3da881",
+      "name": "Preparar Webhook Call",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [
+        -672,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "noreply@tudominio.com",
+        "toEmail": "={{ $('Supabase Usuario').first().json.email }}",
+        "subject": "🚨 Alertas Financieras - Asesor IA",
+        "options": {}
+      },
+      "id": "aae70748-a4d8-4f02-a41d-9d172ad3bd8a",
+      "name": "Enviar Email Alertas",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        432,
+        16
+      ],
+      "webhookId": "7e28204f-e4dd-4257-8f85-c7cba16fe024"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "53327927-15d4-4772-a92d-f0c493e7561f",
+      "name": "Respuesta Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        656,
+        -192
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook Transacciones": {
+      "main": [
+        [
+          {
+            "node": "Supabase Usuario",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Usuario": {
+      "main": [
+        [
+          {
+            "node": "Plaid Transacciones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Plaid Transacciones": {
+      "main": [
+        [
+          {
+            "node": "Procesar Transacciones",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesar Transacciones": {
+      "main": [
+        [
+          {
+            "node": "Supabase Guardar Transacciones",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Supabase Presupuestos",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "OpenAI Análisis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Presupuestos": {
+      "main": [
+        [
+          {
+            "node": "Generar Alertas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generar Alertas": {
+      "main": [
+        [
+          {
+            "node": "Supabase Guardar Alertas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Guardar Alertas": {
+      "main": [
+        [
+          {
+            "node": "Enviar Email Alertas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Análisis": {
+      "main": [
+        [
+          {
+            "node": "Procesar Análisis IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesar Análisis IA": {
+      "main": [
+        [
+          {
+            "node": "Supabase Guardar Análisis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Guardar Análisis": {
+      "main": [
+        [
+          {
+            "node": "Respuesta Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron Diario (8 AM)": {
+      "main": [
+        [
+          {
+            "node": "Supabase Listar Usuarios Activos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Listar Usuarios Activos": {
+      "main": [
+        [
+          {
+            "node": "Preparar Webhook Call",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "5eab8a04-55e7-4018-aa0d-f411bf1ab53c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "60591a5d7f19ddeaf4132412a5ce9c6f6ffb22103e3b4633ccfa9c8882751952"
+  },
+  "id": "oBObFE5pgCEzTYAS",
+  "tags": []
+}

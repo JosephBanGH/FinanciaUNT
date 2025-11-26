@@ -194,6 +194,7 @@ class AsesorFinanciero:
     def __init__(self, transaccion_mgr: TransaccionManager, presupuesto_mgr: PresupuestoManager):
         self.transaccion_mgr = transaccion_mgr
         self.presupuesto_mgr = presupuesto_mgr
+        self.n8n_webhook = st.secrets.get("N8N_WEBHOOK", "")
     
     def get_analisis_ia(self, transacciones: pd.DataFrame, presupuestos: pd.DataFrame):
         """Generar análisis con IA"""
@@ -562,10 +563,7 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
                      transaccion_mgr: TransaccionManager, presupuesto_mgr: PresupuestoManager,
                      alerta_mgr: AlertaManager):
     """Página principal del dashboard financiero"""
-    st.title("💰 Dashboard Financiero")
-    st.markdown("---")
-    
-    # Sidebar
+
     with st.sidebar:
         st.header("📊 Configuración")
         df_usuarios = usuario_mgr.listar_usuarios()
@@ -631,6 +629,12 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
                     import traceback
                     st.code(traceback.format_exc())
 
+
+    st.title("💰 Dashboard Financiero")
+    respuesta = "Aqui habra recomendaciones IA"
+    recomendaciones = ""
+    recomendaciones_alertas = ""
+
     # Obtener datos
     transacciones = transaccion_mgr.listar_transacciones(usuario_id, dias)
     presupuestos = presupuesto_mgr.listar_presupuestos(usuario_id)
@@ -638,7 +642,29 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
     asesor = AsesorFinanciero(transaccion_mgr, presupuesto_mgr)
     analisis = asesor.get_analisis_ia(transacciones, presupuestos)
 
-
+    if st.button('Recomendaciones IA'):
+        try:
+            response = requests.post(
+                f"{asesor.n8n_webhook}/recomendacion-financiaunt",
+                json={
+                    'user_id': usuario_id,
+                    'time': str(datetime.now())
+                },
+                timeout=250
+            )
+            if response.status_code == 200:
+                data = response.json()
+                recomendaciones = data.get('recomendaciones')
+                recomendaciones_alertas = data.get('recomendaciones_alertas')
+            else:
+                respuesta = "❌ No pude procesar tu operación"
+                    
+        except requests.exceptions.Timeout:
+            respuesta = "⏱️ Procesando en segundo plano..."
+        except Exception as e:
+            respuesta = f"❌ Error al conectar: {str(e)[:40]}"
+            
+    st.markdown("---")
     
     # Mostrar alertas del sistema como notificaciones temporales (10 segundos)
     df_alertas = alerta_mgr.listar_alertas(usuario_id, solo_no_leidas=True)
@@ -790,14 +816,15 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
             st.info("Configura presupuestos para ver comparaciones")
         
         # Alertas y recomendaciones
-        st.subheader("💡 Recomendaciones")
-        for rec in analisis['recomendaciones']:
-            st.info(rec)
+        if recomendaciones != "":
+            st.subheader("💡 Recomendaciones IA")
+            st.info(recomendaciones)
+        else:
+            st.info(respuesta)
         
-        if analisis['alertas']:
-            st.subheader("⚠️ Alertas")
-            for alerta in analisis['alertas']:
-                st.warning(alerta)
+        if recomendaciones_alertas != "":
+            st.subheader("⚠️ Recomendaciones Alertas IA")
+            st.warning(recomendaciones_alertas)
     
     # Análisis detallado
     st.markdown("---")
@@ -1133,7 +1160,7 @@ def mostrar_chat(usuario_id):
             
             try:
                 response = requests.post(
-                    f"{asesor.n8n_webhook}",
+                    f"{asesor.n8n_webhook}/transaccion-financiaunt",
                     json={
                         'user_id': usuario_id,
                         'text': user_input.strip(),
