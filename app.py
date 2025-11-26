@@ -627,9 +627,8 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
                     st.error(f"❌ Error al generar PDF: {str(e)}")
                     import traceback
                     st.code(traceback.format_exc())
-
-        mostrar_chat(usuario_id)
         st.divider()
+        mostrar_chat(usuario_id)
     
     # Obtener datos
     transacciones = transaccion_mgr.listar_transacciones(usuario_id, dias)
@@ -637,8 +636,6 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
     
     asesor = AsesorFinanciero(transaccion_mgr, presupuesto_mgr)
     analisis = asesor.get_analisis_ia(transacciones, presupuestos)
-
-
     
     # Mostrar alertas del sistema como notificaciones temporales (10 segundos)
     df_alertas = alerta_mgr.listar_alertas(usuario_id, solo_no_leidas=True)
@@ -1004,7 +1001,7 @@ def mostrar_chat(usuario_id):
             st.markdown(mensaje["content"])
     
     # Entrada de texto del usuario
-    if prompt := st.chat_input("Escribe tu gasto aquí..."):
+    if prompt := st.chat_input("Escribe tu operación aquí...(ejm. Acabo de comprar 2 soles de pan)"):
         # Agregar el mensaje del usuario al historial
         st.session_state.mensajes.append({"role": "user", "content": prompt})
         
@@ -1018,12 +1015,14 @@ def mostrar_chat(usuario_id):
             
             # Llamar a la API de n8n
             asesor = AsesorFinancieroAntiguo()
+            fecha_ahora = str(datetime.now())
             try:
                 response = requests.post(
                     f"{asesor.n8n_webhook}",
                     json={
                         'user_id': usuario_id,  # En producción, usar el ID del usuario autenticado
-                        'text': prompt
+                        'text': prompt,
+                        'time': fecha_ahora
                     },
                     timeout=500
                 )
@@ -1031,9 +1030,9 @@ def mostrar_chat(usuario_id):
                 if response.status_code == 200:
                     data = response.json()
                     print(data)
-                    full_response = f"✅ Gasto registrado: {data.get('text', '')}"
+                    full_response = f"✅ Recibido: {data.get('message', '')}"
                 else:
-                    full_response = "❌ No pude procesar tu gasto. Por favor, inténtalo de nuevo con un formato como: 'Gasté 50 en almuerzo hoy'"
+                    full_response = "❌ No pude procesar tu operación. "
                     
             except Exception as e:
                 full_response = f"❌ Error al conectar con el servidor: {str(e)}"
