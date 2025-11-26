@@ -585,7 +585,10 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
         periodo = st.selectbox("Período de análisis", ["Últimos 7 días", "Últimos 30 días", "Últimos 90 días"])
         dias_map = {"Últimos 7 días": 7, "Últimos 30 días": 30, "Últimos 90 días": 90}
         dias = dias_map[periodo]
-        
+
+        st.divider()
+        mostrar_chat(usuario_id)
+
         st.markdown("---")
         st.header("⚡ Acciones Rápidas")
         if st.button("🔄 Actualizar Análisis", use_container_width=True):
@@ -628,9 +631,6 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
                     import traceback
                     st.code(traceback.format_exc())
 
-
-        st.divider()
-        mostrar_chat(usuario_id)
     # Obtener datos
     transacciones = transaccion_mgr.listar_transacciones(usuario_id, dias)
     presupuestos = presupuesto_mgr.listar_presupuestos(usuario_id)
@@ -1107,9 +1107,6 @@ def mostrar_chat(usuario_id):
         </script>
     """, unsafe_allow_html=True)
     
-    # Separador
-    st.markdown("---")
-    
     # Form para input (FUERA del chat HTML)
     with st.form(key=f"chat_form_{len(st.session_state.mensajes)}", clear_on_submit=True):
         col1, col2 = st.columns([4, 1])
@@ -1582,21 +1579,12 @@ def main():
     
     # Menú principal en sidebar
     st.sidebar.title("🏦 Asesor Financiero IA")
-    st.sidebar.markdown("---")
     
     pagina = st.sidebar.radio(
         "Navegación",
         ["📊 Dashboard", "⚙️ Mantenedores"],
         label_visibility="collapsed"
     )
-    
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 📖 Ayuda")
-    st.sidebar.info("""
-    **Dashboard**: Visualiza tus finanzas, gastos y proyecciones.
-    
-    **Mantenedores**: Administra usuarios, transacciones, presupuestos y alertas.
-    """)
     
     # Renderizar página seleccionada
     if pagina == "📊 Dashboard":
