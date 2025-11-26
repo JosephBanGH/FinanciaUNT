@@ -627,15 +627,18 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
                     st.error(f"❌ Error al generar PDF: {str(e)}")
                     import traceback
                     st.code(traceback.format_exc())
+
+
         st.divider()
         mostrar_chat(usuario_id)
-    
     # Obtener datos
     transacciones = transaccion_mgr.listar_transacciones(usuario_id, dias)
     presupuestos = presupuesto_mgr.listar_presupuestos(usuario_id)
     
     asesor = AsesorFinanciero(transaccion_mgr, presupuesto_mgr)
     analisis = asesor.get_analisis_ia(transacciones, presupuestos)
+
+
     
     # Mostrar alertas del sistema como notificaciones temporales (10 segundos)
     df_alertas = alerta_mgr.listar_alertas(usuario_id, solo_no_leidas=True)
@@ -986,63 +989,180 @@ class AsesorFinancieroAntiguo:
         return analisis
 
 def mostrar_chat(usuario_id):
-    """Muestra la interfaz de chat para agregar gastos"""
-    st.subheader("💬 Chat de Gastos")
+    """Chat simple y funcional con scroll que realmente funciona"""
     
-    # Inicializar el historial del chat si no existe
+    # Inicializar mensajes
     if 'mensajes' not in st.session_state:
         st.session_state.mensajes = [
-            {"role": "assistant", "content": "¡Hola! Soy tu asistente financiero. Puedes decirme cosas como:\n- 'Gasté 80 soles en el supermercado'\n- 'Añade 50 de almuerzo de hoy'\n- 'Pagué 30 por el taxi ayer'"}
+            {
+                "role": "assistant", 
+                "content": "¡Hola! 👋 Soy tu asistente financiero.\n\nEjemplos:\n• Gasté 80 soles en supermercado\n• Añade 50 de almuerzo\n• Pagué 30 de taxi"
+            }
         ]
     
-    # Mostrar el historial del chat
-    for mensaje in st.session_state.mensajes:
-        with st.chat_message(mensaje["role"]):
-            st.markdown(mensaje["content"])
+    # CSS Simple pero efectivo
+    st.markdown("""
+        <style>
+        .chat-box {
+            background: #1e1e2e;
+            border-radius: 12px;
+            padding: 0;
+            margin: 10px 0;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        
+        .chat-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px;
+            font-weight: 600;
+            border-radius: 12px 12px 0 0;
+            text-align: center;
+        }
+        
+        .chat-msg-container {
+            background: #252535;
+            padding: 12px;
+            height: 350px;
+            overflow-y: scroll;
+            overflow-x: hidden;
+        }
+        
+        .chat-msg-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .chat-msg-container::-webkit-scrollbar-track {
+            background: #1e1e2e;
+        }
+        
+        .chat-msg-container::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 3px;
+        }
+        
+        .msg-assistant {
+            background: #3a3a4a;
+            color: #e8e8e8;
+            padding: 10px 12px;
+            border-radius: 12px;
+            border-bottom-left-radius: 3px;
+            margin: 8px 15% 8px 0;
+            font-size: 13px;
+            line-height: 1.5;
+            max-width: 85%;
+            word-wrap: break-word;
+            word-break: break-word;
+            overflow-wrap: break-word;
+            white-space: pre-wrap;
+        }
+        
+        .msg-user {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 10px 12px;
+            border-radius: 12px;
+            border-bottom-right-radius: 3px;
+            margin: 8px 0 8px 15%;
+            font-size: 13px;
+            line-height: 1.5;
+            text-align: right;
+            max-width: 85%;
+            word-wrap: break-word;
+            word-break: break-word;
+            overflow-wrap: break-word;
+            white-space: pre-wrap;
+            margin-left: auto;
+        }
+        </style>
+    """, unsafe_allow_html=True)
     
-    # Entrada de texto del usuario
-    if prompt := st.chat_input("Escribe tu operación aquí...(ejm. Acabo de comprar 2 soles de pan)"):
-        # Agregar el mensaje del usuario al historial
-        st.session_state.mensajes.append({"role": "user", "content": prompt})
+    # Construir todo el chat como HTML
+    chat_html = '<div class="chat-box">'
+    chat_html += '<div class="chat-header">💬 Chat de Gastos</div>'
+    chat_html += '<div class="chat-msg-container" id="chatMessages">'
+    
+    # Agregar todos los mensajes
+    for mensaje in st.session_state.mensajes:
+        contenido = mensaje["content"].replace("\n", "<br>")
+        if mensaje["role"] == "assistant":
+            chat_html += f'<div class="msg-assistant">{contenido}</div>'
+        else:
+            chat_html += f'<div class="msg-user">{contenido}</div>'
+    
+    chat_html += '</div></div>'
+    
+    # Renderizar el chat completo
+    st.markdown(chat_html, unsafe_allow_html=True)
+    
+    # Auto-scroll
+    st.markdown("""
+        <script>
+        setTimeout(function() {
+            var container = parent.document.getElementById('chatMessages');
+            if (container) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }, 100);
+        </script>
+    """, unsafe_allow_html=True)
+    
+    # Separador
+    st.markdown("---")
+    
+    # Form para input (FUERA del chat HTML)
+    with st.form(key=f"chat_form_{len(st.session_state.mensajes)}", clear_on_submit=True):
+        col1, col2 = st.columns([4, 1])
         
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        with col1:
+            user_input = st.text_input(
+                "msg",
+                placeholder="Escribe tu gasto aquí...",
+                label_visibility="collapsed"
+            )
         
-        # Procesar el mensaje
-        with st.chat_message("assistant"):
-            message_placeholder = st.empty()
-            full_response = ""
+        with col2:
+            enviar = st.form_submit_button("➤", use_container_width=True)
+        
+        if enviar and user_input.strip():
+            # Agregar mensaje del usuario
+            st.session_state.mensajes.append({
+                "role": "user",
+                "content": user_input.strip()
+            })
             
-            # Llamar a la API de n8n
+            # Llamar al webhook
             asesor = AsesorFinancieroAntiguo()
-            fecha_ahora = str(datetime.now())
+            
             try:
                 response = requests.post(
                     f"{asesor.n8n_webhook}",
                     json={
-                        'user_id': usuario_id,  # En producción, usar el ID del usuario autenticado
-                        'text': prompt,
-                        'time': fecha_ahora
+                        'user_id': usuario_id,
+                        'text': user_input.strip(),
+                        'time': str(datetime.now())
                     },
-                    timeout=500
+                    timeout=30
                 )
                 
                 if response.status_code == 200:
                     data = response.json()
-                    print(data)
-                    full_response = f"✅ Recibido: {data.get('message', '')}"
+                    respuesta = f"✅ {data.get('message', 'Registrado correctamente')}"
                 else:
-                    full_response = "❌ No pude procesar tu operación. "
+                    respuesta = "❌ No pude procesar tu operación"
                     
+            except requests.exceptions.Timeout:
+                respuesta = "⏱️ Procesando en segundo plano..."
             except Exception as e:
-                full_response = f"❌ Error al conectar con el servidor: {str(e)}"
+                respuesta = f"❌ Error al conectar: {str(e)[:40]}"
             
-            message_placeholder.markdown(full_response)
-            st.session_state.mensajes.append({"role": "assistant", "content": full_response})
+            # Agregar respuesta
+            st.session_state.mensajes.append({
+                "role": "assistant",
+                "content": respuesta
+            })
             
-            # Actualizar la interfaz
             st.rerun()
-
 
 def pagina_mantenedores(db: DatabaseManager, usuario_mgr: UsuarioManager, 
                         transaccion_mgr: TransaccionManager, presupuesto_mgr: PresupuestoManager,
