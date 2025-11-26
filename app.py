@@ -996,7 +996,7 @@ def mostrar_chat(usuario_id):
         st.session_state.mensajes = [
             {
                 "role": "assistant", 
-                "content": "¡Hola! 👋 Soy tu asistente financiero.\n\nEjemplos:\n• Gasté 80 soles en supermercado\n• Añade 50 de almuerzo\n• Pagué 30 de taxi"
+                "content": "¡Hola! 👋 Soy tu asistente financiero.\n\nEjemplos:\n• Gasté 80 soles en supermercado y 20 en la escuela\n• Añade 50 de almuerzo\n\nEn un mensaje puedes mandar varias operaciones.\nRecuerda que funciona con IA por lo que debes verificar la información"
             }
         ]
     
@@ -1139,12 +1139,13 @@ def mostrar_chat(usuario_id):
                         'text': user_input.strip(),
                         'time': str(datetime.now())
                     },
-                    timeout=30
+                    timeout=250
                 )
-                
                 if response.status_code == 200:
-                    data = response.json()
-                    respuesta = f"✅ {data.get('message', 'Registrado correctamente')}"
+                    data = response.json()[0]['messages']
+                    respuesta = f"Operaciones hechas"
+                    for d in data:
+                        respuesta += '\n- '+d
                 else:
                     respuesta = "❌ No pude procesar tu operación"
                     
@@ -1158,7 +1159,7 @@ def mostrar_chat(usuario_id):
                 "role": "assistant",
                 "content": respuesta
             })
-            
+            print(respuesta)
             st.rerun()
 
 def pagina_mantenedores(db: DatabaseManager, usuario_mgr: UsuarioManager, 
