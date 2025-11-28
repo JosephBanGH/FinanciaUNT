@@ -1023,7 +1023,7 @@ def mostrar_chat(usuario_id):
         st.session_state.mensajes = [
             {
                 "role": "assistant", 
-                "content": "¡Hola! 👋 Soy tu asistente financiero.\n\nEjemplos:\n• Gasté 80 soles en supermercado y 20 en la escuela\n• Añade 50 de almuerzo hace dos dias\n\nEn un mensaje puedes mandar varias operaciones.\nRecuerda que funciona con IA por lo que debes verificar la información"
+                "content": "¡Hola! 👋 Soy tu asistente financiero.\n\nEjemplos:\n• Gasté 80 soles en supermercado y 20 en la escuela\n• Añade 50 de almuerzo hace dos dias, mi preupuesto para la semana es de 20 soles\n\nEn un mensaje puedes mandar varias operaciones para ingresos, gastos y presupuestos.\nRecuerda que funciona con IA por lo que debes verificar la información"
             }
         ]
     
