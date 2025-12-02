@@ -8,6 +8,7 @@ __pycache__/
 
 # STREAMLIT
 .streamlit
+.streamlit/
 
 # Distribution / packaging
 .Python

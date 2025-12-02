@@ -80,6 +80,23 @@ class DatabaseInitializer:
         
         return usuarios_creados
     
+    def login(self, usuario):
+        try:
+            response = self.client.table('usuarios').select('*').eq('nombre',usuario['nombre']).eq('access_token_plaid',usuario['access_token_plaid']).execute()
+            st.session_state['user_id'] = response.data[0]['id']
+            st.session_state['user_name'] = response.data[0]['nombre']
+            print(f'{response.data[0]['id']}')
+            return True
+        except Exception as e:
+            st.error(f"❌ Error al ingresar: {e}")
+
+    def register(self, usuario):
+        try:
+            self.client.table('usuarios').insert(usuario).execute()
+            st.success('Usuario registrado')
+        except Exception as e:
+            st.error(f"❌ Error al crear usuario: {e}")
+
     def crear_transacciones_ejemplo(self, usuario_id: str, cantidad: int = 50):
         """Crear transacciones de ejemplo para un usuario"""
         categorias_gasto = [

@@ -13,6 +13,7 @@ from fpdf import FPDF
 import io
 import base64
 import requests
+from auth import main_auth
 
 
 # Configuración de la página
@@ -566,19 +567,10 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
 
     with st.sidebar:
         st.header("📊 Configuración")
-        df_usuarios = usuario_mgr.listar_usuarios()
         
-        if df_usuarios.empty:
-            st.warning("No hay usuarios. Crea uno en la sección de Mantenedores")
-            return
-        
-        usuario_id = st.selectbox(
-            "Usuario",
-            options=df_usuarios['id'].tolist(),
-            format_func=lambda x: df_usuarios[df_usuarios['id']==x]['nombre'].values[0]
-        )
-        
-        usuario_nombre = df_usuarios[df_usuarios['id']==usuario_id]['nombre'].values[0]
+        st.text(st.session_state['user_name'])
+        usuario_nombre = st.session_state['user_name']
+        usuario_id =st.session_state['user_id']
         
         periodo = st.selectbox("Período de análisis", ["Últimos 7 días", "Últimos 30 días", "Últimos 90 días"])
         dias_map = {"Últimos 7 días": 7, "Últimos 30 días": 30, "Últimos 90 días": 90}
@@ -1596,29 +1588,43 @@ def main():
     # Inicializar managers
     db = DatabaseManager()
     
-    if db.client is None:
-        st.error("❌ No se pudo conectar a la base de datos. Verifica las credenciales en secrets.")
+    if 'logged_in' not in st.session_state or not st.session_state['logged_in']:
+
+        menu = st.sidebar.radio('Ingreso al sistema',['Autentificación'])
+
+        if menu == 'Autentificación':
+            main_auth()
         return
     
-    usuario_mgr = UsuarioManager(db)
-    transaccion_mgr = TransaccionManager(db)
-    presupuesto_mgr = PresupuestoManager(db)
-    alerta_mgr = AlertaManager(db)
-    
-    # Menú principal en sidebar
-    st.sidebar.title("🏦 Asesor Financiero IA")
-    
-    pagina = st.sidebar.radio(
-        "Navegación",
-        ["📊 Dashboard", "⚙️ Mantenedores"],
-        label_visibility="collapsed"
-    )
-    
-    # Renderizar página seleccionada
-    if pagina == "📊 Dashboard":
-        pagina_dashboard(db, usuario_mgr, transaccion_mgr, presupuesto_mgr, alerta_mgr)
     else:
-        pagina_mantenedores(db, usuario_mgr, transaccion_mgr, presupuesto_mgr, alerta_mgr)
+
+
+        if db.client is None:
+            st.error("❌ No se pudo conectar a la base de datos. Verifica las credenciales en secrets.")
+            return
+        
+        usuario_mgr = UsuarioManager(db)
+        transaccion_mgr = TransaccionManager(db)
+        presupuesto_mgr = PresupuestoManager(db)
+        alerta_mgr = AlertaManager(db)
+        
+        # Menú principal en sidebar
+        st.sidebar.title("🏦 Asesor Financiero IA")
+        
+        pagina = st.sidebar.radio(
+            "Navegación",
+            ["📊 Dashboard", "⚙️ Mantenedores"],
+            label_visibility="collapsed"
+        )
+        
+        # Renderizar página seleccionada
+        if pagina == "📊 Dashboard":
+            pagina_dashboard(db, usuario_mgr, transaccion_mgr, presupuesto_mgr, alerta_mgr)
+        else:
+            pagina_mantenedores(db, usuario_mgr, transaccion_mgr, presupuesto_mgr, alerta_mgr)
 
 if __name__ == "__main__":
     main()
+
+
+
