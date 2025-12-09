@@ -17,12 +17,13 @@ def main_auth():
             }
             submited = st.form_submit_button('Ingresar')
             try:
-                if submited and nombre != '' and contraseña != '':
-                    if db.login(usuario):
-                        st.session_state['logged_in'] = True
-                        st.rerun()
-                else:
-                    st.error('Llena todos los campos')
+                if submited:
+                    if nombre and contraseña:
+                        if db.login(usuario):
+                            st.session_state['logged_in'] = True
+                            st.rerun()
+                    else:
+                        st.error('Llena todos los campos')
             except Exception as e:
                 st.error(f'Error: {e}')
     with tab2:
@@ -37,12 +38,13 @@ def main_auth():
             'email':correo,
             'plan_suscripcion':plan
         }
-        if st.button('Registrar') and nombre != '' and contraseña != '' and contraseña == contraseña_r:
-            db.register(usuario)
-        elif contraseña != contraseña_r:
-            st.error('Contraseñas no coinciden')
-        else:
-            st.error('Llena todos los campos')
+        if st.button('Registrar'):
+            if nombre and contraseña and contraseña == contraseña_r:
+                db.register(usuario)
+            elif contraseña != contraseña_r:
+                st.error('Contraseñas no coinciden')
+            else:
+                st.error('Llena todos los campos')
 
     st.info('Los datos son almacenados en supabase, no es necesario que ingrese datos reales')
             

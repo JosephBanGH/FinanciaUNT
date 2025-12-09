@@ -14,7 +14,7 @@ import io
 import base64
 import requests
 from auth import main_auth
-
+import time
 
 # Configuración de la página
 st.set_page_config(
@@ -48,7 +48,8 @@ class UsuarioManager:
     def listar_usuarios(self) -> pd.DataFrame:
         try:
             response = self.db.table('usuarios').select('*').order('fecha_registro', desc=True).execute()
-            return pd.DataFrame(response.data) if response.data else pd.DataFrame()
+            df = pd.DataFrame(response.data) if response.data else pd.DataFrame()
+            return df.loc[df['id']==st.session_state['user_id']]
         except:
             return pd.DataFrame()
     
@@ -502,23 +503,23 @@ def generar_reporte_pdf(usuario_nombre: str, transacciones: pd.DataFrame,
         pdf.ln(5)
     
     # Recomendaciones de IA
-    pdf.chapter_title('RECOMENDACIONES INTELIGENTES')
-    for i, rec in enumerate(analisis['recomendaciones'], 1):
-        pdf.set_font('Arial', '', 10)
-        pdf.multi_cell(0, 7, f'{i}. {rec}')
-        pdf.ln(2)
-    pdf.ln(3)
+    # pdf.chapter_title('RECOMENDACIONES INTELIGENTES')
+    # for i, rec in enumerate(analisis['recomendaciones'], 1):
+    #     pdf.set_font('Arial', '', 10)
+    #     pdf.multi_cell(0, 7, f'{i}. {rec}')
+    #     pdf.ln(2)
+    # pdf.ln(3)
     
     # Alertas
-    if analisis['alertas']:
-        pdf.chapter_title('ALERTAS IMPORTANTES')
-        for alerta in analisis['alertas']:
-            pdf.set_font('Arial', 'B', 10)
-            pdf.set_text_color(255, 102, 0)
-            pdf.multi_cell(0, 7, f'! {alerta}')
-            pdf.set_text_color(0, 0, 0)
-            pdf.ln(2)
-        pdf.ln(3)
+    # if analisis['alertas']:
+    #     pdf.chapter_title('ALERTAS IMPORTANTES')
+    #     for alerta in analisis['alertas']:
+    #         pdf.set_font('Arial', 'B', 10)
+    #         pdf.set_text_color(255, 102, 0)
+    #         pdf.multi_cell(0, 7, f'! {alerta}')
+    #         pdf.set_text_color(0, 0, 0)
+    #         pdf.ln(2)
+    #     pdf.ln(3)
     
     # Predicciones
     pdf.chapter_title('PROYECCIONES FINANCIERAS')
@@ -572,7 +573,7 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
         usuario_nombre = st.session_state['user_name']
         usuario_id =st.session_state['user_id']
         
-        periodo = st.selectbox("Período de análisis", ["Últimos 7 días", "Últimos 30 días", "Últimos 90 días"])
+        periodo = st.selectbox("Período de análisis", ["Últimos 7 días", "Últimos 30 días", "Últimos 90 días"],1)
         dias_map = {"Últimos 7 días": 7, "Últimos 30 días": 30, "Últimos 90 días": 90}
         dias = dias_map[periodo]
 
@@ -767,7 +768,7 @@ def pagina_dashboard(db: DatabaseManager, usuario_mgr: UsuarioManager,
             st.info("No hay datos de tendencias")
     
     with col2:
-        st.subheader("🎯 Presupuesto vs Realidad")
+        st.subheader("🎯 Presupuesto Mensual vs Realidad")
         if not transacciones.empty and not presupuestos.empty:
             gastos_categoria = transacciones[transacciones['tipo'] == 'gasto'].groupby('categoria')['monto'].sum()
             presupuestos_dict = presupuestos.set_index('categoria')['monto_maximo'].to_dict()
@@ -1015,7 +1016,7 @@ def mostrar_chat(usuario_id):
         st.session_state.mensajes = [
             {
                 "role": "assistant", 
-                "content": "¡Hola! 👋 Soy tu asistente financiero.\n\nEjemplos:\n• Gasté 80 soles en supermercado y 20 en la escuela\n• Añade 50 de almuerzo hace dos dias, mi preupuesto para la semana es de 20 soles\n\nEn un mensaje puedes mandar varias operaciones para ingresos, gastos y presupuestos.\nRecuerda que funciona con IA por lo que debes verificar la información"
+                "content": "¡Hola! 👋 Soy tu asistente financiero.\n\nEjemplos:\n• Gasté 80 soles en supermercado y 20 en la escuela\n• Añade 50 de almuerzo hace dos dias, mi preupuesto mensual es de 20 soles\n\nEn un mensaje puedes mandar varias operaciones para ingresos, gastos y presupuestos.\nRecuerda que funciona con IA por lo que debes verificar la información"
             }
         ]
     
@@ -1098,7 +1099,7 @@ def mostrar_chat(usuario_id):
     
     # Construir todo el chat como HTML
     chat_html = '<div class="chat-box">'
-    chat_html += '<div class="chat-header">💬 Chat de Gastos</div>'
+    chat_html += '<div class="chat-header">💬 Chat Financiero</div>'
     chat_html += '<div class="chat-msg-container" id="chatMessages">'
     
     # Agregar todos los mensajes
@@ -1127,6 +1128,10 @@ def mostrar_chat(usuario_id):
     """, unsafe_allow_html=True)
     
     # Form para input (FUERA del chat HTML)
+    
+    if st.button('Medir. Presiona antes de enviar mensaje, para fines de prueba'):
+        st.session_state['timer_active'] = True
+        st.session_state['start_timer'] = time.time()
     with st.form(key=f"chat_form_{len(st.session_state.mensajes)}", clear_on_submit=True):
         col1, col2 = st.columns([4, 1])
         
@@ -1165,13 +1170,21 @@ def mostrar_chat(usuario_id):
                     respuesta = f"Operaciones hechas"
                     for d in data:
                         respuesta += '\n- '+d
+                    if st.session_state['timer_active'] == True:
+                        st.session_state['end_timer'] = time.time()
+                        respuesta += '\nTiempo del proceso: '+str(st.session_state['end_timer']-st.session_state['start_timer'])
+                        st.session_state['timer_active'] = False
+                        print(st.session_state['user_name']+': '+str(st.session_state['end_timer']-st.session_state['start_timer']))
                 else:
                     respuesta = "❌ No pude procesar tu operación"
-                    
+                    st.session_state['timer_active'] = False
+
             except requests.exceptions.Timeout:
-                respuesta = "⏱️ Procesando en segundo plano..."
+                respuesta = "⏱️ Timeout"
+                st.session_state['timer_active'] = False
             except Exception as e:
                 respuesta = f"❌ Error al conectar: {str(e)[:40]}"
+                st.session_state['timer_active'] = False
             
             # Agregar respuesta
             st.session_state.mensajes.append({
@@ -1190,7 +1203,7 @@ def pagina_mantenedores(db: DatabaseManager, usuario_mgr: UsuarioManager,
     
     menu = st.sidebar.selectbox(
         "Seleccionar Mantenedor",
-        ["👥 Usuarios", "💳 Transacciones", "🎯 Presupuestos", "⚠️ Alertas"]
+        ["👥 Usuarios", "💳 Transacciones", "🎯 Presupuestos"]
     )
     
     # === MANTENEDOR DE USUARIOS ===
@@ -1375,8 +1388,7 @@ def pagina_mantenedores(db: DatabaseManager, usuario_mgr: UsuarioManager,
             if not df_trans_edit.empty:
                 trans_seleccionada = st.selectbox(
                     "Seleccionar Transacción",
-                    options=df_trans_edit['id'].tolist(),
-                    format_func=lambda x: f"{df_trans_edit[df_trans_edit['id']==x]['descripcion'].values[0][:30]} - ${df_trans_edit[df_trans_edit['id']==x]['monto'].values[0]}"
+                    options=df_trans_edit['id'].tolist()
                 )
                 
                 if trans_seleccionada:
@@ -1515,72 +1527,72 @@ def pagina_mantenedores(db: DatabaseManager, usuario_mgr: UsuarioManager,
                             st.rerun()
     
     # === MANTENEDOR DE ALERTAS ===
-    elif menu == "⚠️ Alertas":
-        st.header("Gestión de Alertas")
+    # elif menu == "⚠️ Alertas":
+    #     st.header("Gestión de Alertas")
         
-        tab1, tab2 = st.tabs(["📋 Listar", "➕ Crear"])
+    #     tab1, tab2 = st.tabs(["📋 Listar", "➕ Crear"])
         
-        with tab1:
-            solo_no_leidas = st.checkbox("Solo alertas no leídas")
+    #     with tab1:
+    #         solo_no_leidas = st.checkbox("Solo alertas no leídas")
             
-            df_alertas = alerta_mgr.listar_alertas(solo_no_leidas=solo_no_leidas)
+    #         df_alertas = alerta_mgr.listar_alertas(solo_no_leidas=solo_no_leidas)
             
-            if not df_alertas.empty:
-                for idx, alerta in df_alertas.iterrows():
-                    severidad_icon = {"baja": "🟢", "media": "🟡", "alta": "🔴"}
-                    icon = severidad_icon.get(alerta['severidad'], "⚪")
+    #         if not df_alertas.empty:
+    #             for idx, alerta in df_alertas.iterrows():
+    #                 severidad_icon = {"baja": "🟢", "media": "🟡", "alta": "🔴"}
+    #                 icon = severidad_icon.get(alerta['severidad'], "⚪")
                     
-                    with st.expander(f"{icon} {alerta['tipo']} - {alerta['mensaje'][:50]}..."):
-                        st.write(f"**Mensaje:** {alerta['mensaje']}")
-                        st.write(f"**Severidad:** {alerta['severidad']}")
-                        st.write(f"**Fecha:** {alerta['created_at']}")
-                        st.write(f"**Estado:** {'✅ Leída' if alerta['leida'] else '⏳ No leída'}")
+    #                 with st.expander(f"{icon} {alerta['tipo']} - {alerta['mensaje'][:50]}..."):
+    #                     st.write(f"**Mensaje:** {alerta['mensaje']}")
+    #                     st.write(f"**Severidad:** {alerta['severidad']}")
+    #                     st.write(f"**Fecha:** {alerta['created_at']}")
+    #                     st.write(f"**Estado:** {'✅ Leída' if alerta['leida'] else '⏳ No leída'}")
                         
-                        if not alerta['leida']:
-                            if st.button(f"Marcar como leída", key=f"leer_{alerta['id']}"):
-                                alerta_mgr.marcar_leida(alerta['id'])
-                                st.success("✅ Alerta marcada como leída")
-                                st.rerun()
-            else:
-                st.info("No hay alertas para mostrar")
+    #                     if not alerta['leida']:
+    #                         if st.button(f"Marcar como leída", key=f"leer_{alerta['id']}"):
+    #                             alerta_mgr.marcar_leida(alerta['id'])
+    #                             st.success("✅ Alerta marcada como leída")
+    #                             st.rerun()
+    #         else:
+    #             st.info("No hay alertas para mostrar")
         
-        with tab2:
-            df_usuarios = usuario_mgr.listar_usuarios()
-            if not df_usuarios.empty:
-                with st.form("form_crear_alerta"):
-                    st.subheader("Nueva Alerta")
+    #     with tab2:
+    #         df_usuarios = usuario_mgr.listar_usuarios()
+    #         if not df_usuarios.empty:
+    #             with st.form("form_crear_alerta"):
+    #                 st.subheader("Nueva Alerta")
                     
-                    usuario_alerta = st.selectbox(
-                        "Usuario*",
-                        options=df_usuarios['id'].tolist(),
-                        format_func=lambda x: df_usuarios[df_usuarios['id']==x]['nombre'].values[0]
-                    )
+    #                 usuario_alerta = st.selectbox(
+    #                     "Usuario*",
+    #                     options=df_usuarios['id'].tolist(),
+    #                     format_func=lambda x: df_usuarios[df_usuarios['id']==x]['nombre'].values[0]
+    #                 )
                     
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        tipo_alerta = st.selectbox("Tipo*", 
-                            ['presupuesto_excedido', 'gasto_inusual', 'recordatorio', 'sugerencia'])
-                    with col2:
-                        severidad_alerta = st.selectbox("Severidad*", ['baja', 'media', 'alta'])
+    #                 col1, col2 = st.columns(2)
+    #                 with col1:
+    #                     tipo_alerta = st.selectbox("Tipo*", 
+    #                         ['presupuesto_excedido', 'gasto_inusual', 'recordatorio', 'sugerencia'])
+    #                 with col2:
+    #                     severidad_alerta = st.selectbox("Severidad*", ['baja', 'media', 'alta'])
                     
-                    mensaje_alerta = st.text_area("Mensaje*", placeholder="Descripción de la alerta")
+    #                 mensaje_alerta = st.text_area("Mensaje*", placeholder="Descripción de la alerta")
                     
-                    submitted = st.form_submit_button("Crear Alerta", use_container_width=True)
+    #                 submitted = st.form_submit_button("Crear Alerta", use_container_width=True)
                     
-                    if submitted:
-                        if mensaje_alerta:
-                            try:
-                                alerta_mgr.crear_alerta(
-                                    usuario_alerta, tipo_alerta, mensaje_alerta, severidad_alerta
-                                )
-                                st.success("✅ Alerta creada")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ Error: {str(e)}")
-                        else:
-                            st.warning("⚠️ Complete el mensaje de la alerta")
-            else:
-                st.warning("No hay usuarios registrados")
+    #                 if submitted:
+    #                     if mensaje_alerta:
+    #                         try:
+    #                             alerta_mgr.crear_alerta(
+    #                                 usuario_alerta, tipo_alerta, mensaje_alerta, severidad_alerta
+    #                             )
+    #                             st.success("✅ Alerta creada")
+    #                             st.rerun()
+    #                         except Exception as e:
+    #                             st.error(f"❌ Error: {str(e)}")
+    #                     else:
+    #                         st.warning("⚠️ Complete el mensaje de la alerta")
+    #         else:
+    #             st.warning("No hay usuarios registrados")
 
 # ==================== MAIN ====================
 
@@ -1597,7 +1609,6 @@ def main():
         return
     
     else:
-
 
         if db.client is None:
             st.error("❌ No se pudo conectar a la base de datos. Verifica las credenciales en secrets.")

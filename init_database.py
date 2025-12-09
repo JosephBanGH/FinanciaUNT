@@ -85,10 +85,9 @@ class DatabaseInitializer:
             response = self.client.table('usuarios').select('*').eq('nombre',usuario['nombre']).eq('access_token_plaid',usuario['access_token_plaid']).execute()
             st.session_state['user_id'] = response.data[0]['id']
             st.session_state['user_name'] = response.data[0]['nombre']
-            print(f'{response.data[0]['id']}')
             return True
-        except Exception as e:
-            st.error(f"❌ Error al ingresar: {e}")
+        except:
+            st.error(f"❌ Error al ingresar")
 
     def register(self, usuario):
         try:

@@ -1,7 +1,15 @@
-import json
-j= [{'d':['adw','wd']}]
-data = j[0]['d']
-respuesta = 'Operaciones hechas:'
-for d in data:
-    respuesta += '\n- '+d
-print(respuesta)
+from app import DatabaseManager, UsuarioManager
+import streamlit as st
+from auth import main_auth
+
+db = DatabaseManager()
+um = UsuarioManager(db)
+
+if 'logged_in' not in st.session_state or not st.session_state['logged_in']:
+
+    main_auth()
+    
+else:
+
+    st.title(um.listar_usuarios())
+    print(um.listar_usuarios())
