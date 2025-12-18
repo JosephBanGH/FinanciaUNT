@@ -1315,7 +1315,7 @@ def pagina_mantenedores(db: DatabaseManager, usuario_mgr: UsuarioManager,
         with col1:
             usuario_filtro = st.selectbox(
                 "Filtrar por Usuario",
-                options=['Todos'] + df_usuarios['id'].tolist(),
+                options=df_usuarios['id'].tolist(),
                 format_func=lambda x: 'Todos' if x == 'Todos' else df_usuarios[df_usuarios['id']==x]['nombre'].values[0]
             )
         
@@ -1325,8 +1325,8 @@ def pagina_mantenedores(db: DatabaseManager, usuario_mgr: UsuarioManager,
         tab1, tab2, tab3 = st.tabs(["📋 Listar", "➕ Crear", "✏️ Editar/Eliminar"])
         
         with tab1:
-            usuario_id = None if usuario_filtro == 'Todos' else usuario_filtro
-            df_transacciones = transaccion_mgr.listar_transacciones(usuario_id, dias_filtro)
+            
+            df_transacciones = transaccion_mgr.listar_transacciones(usuario_filtro, dias_filtro)
             
             if not df_transacciones.empty:
                 st.dataframe(df_transacciones, use_container_width=True)
@@ -1384,7 +1384,7 @@ def pagina_mantenedores(db: DatabaseManager, usuario_mgr: UsuarioManager,
                         st.warning("⚠️ Complete todos los campos obligatorios")
         
         with tab3:
-            df_trans_edit = transaccion_mgr.listar_transacciones(dias=30)
+            df_trans_edit = transaccion_mgr.listar_transacciones(usuario_id=st.session_state['user_id'],dias=dias_filtro)
             if not df_trans_edit.empty:
                 trans_seleccionada = st.selectbox(
                     "Seleccionar Transacción",
@@ -1438,7 +1438,7 @@ def pagina_mantenedores(db: DatabaseManager, usuario_mgr: UsuarioManager,
         tab1, tab2, tab3 = st.tabs(["📋 Listar", "➕ Crear", "✏️ Editar/Eliminar"])
         
         with tab1:
-            df_presupuestos = presupuesto_mgr.listar_presupuestos()
+            df_presupuestos = presupuesto_mgr.listar_presupuestos(st.session_state['user_id'])
             if not df_presupuestos.empty:
                 st.dataframe(df_presupuestos, use_container_width=True)
                 
@@ -1484,7 +1484,7 @@ def pagina_mantenedores(db: DatabaseManager, usuario_mgr: UsuarioManager,
                 st.warning("No hay usuarios registrados")
         
         with tab3:
-            df_pres_edit = presupuesto_mgr.listar_presupuestos()
+            df_pres_edit = presupuesto_mgr.listar_presupuestos(st.session_state['user_id'])
             if not df_pres_edit.empty:
                 pres_seleccionado = st.selectbox(
                     "Seleccionar Presupuesto",
